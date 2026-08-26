@@ -900,6 +900,53 @@ function AppContent() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (!schoolEmail) {
+      displayToast('Gagal mengimpor: Email sekolah tidak terdeteksi. Silakan login kembali.', true);
+      return;
+    }
+
+    const normalizeClass = (input: string): string => {
+      const clean = input.trim().toLowerCase();
+      
+      // Direct matches
+      if (clean === 'kelas 1' || clean === 'kelas i') return 'Kelas 1';
+      if (clean === 'kelas 2' || clean === 'kelas ii') return 'Kelas 2';
+      if (clean === 'kelas 3' || clean === 'kelas iii') return 'Kelas 3';
+      if (clean === 'kelas 4' || clean === 'kelas iv') return 'Kelas 4';
+      if (clean === 'kelas 5' || clean === 'kelas v') return 'Kelas 5';
+      if (clean === 'kelas 6' || clean === 'kelas vi') return 'Kelas 6';
+      
+      // Numbers or Roman Numerals alone
+      if (clean === '1' || clean === 'i') return 'Kelas 1';
+      if (clean === '2' || clean === 'ii') return 'Kelas 2';
+      if (clean === '3' || clean === 'iii') return 'Kelas 3';
+      if (clean === '4' || clean === 'iv') return 'Kelas 4';
+      if (clean === '5' || clean === 'v') return 'Kelas 5';
+      if (clean === '6' || clean === 'vi') return 'Kelas 6';
+      
+      // Check prefix / regex matching (e.g. "kelas 4a" or "kelas 1-b" or "kelas v a")
+      const matchKelasNum = clean.match(/^kelas\s*([1-6i|v|x]+)/i);
+      if (matchKelasNum) {
+        const num = matchKelasNum[1];
+        if (num === '1' || num === 'i') return 'Kelas 1';
+        if (num === '2' || num === 'ii') return 'Kelas 2';
+        if (num === '3' || num === 'iii') return 'Kelas 3';
+        if (num === '4' || num === 'iv') return 'Kelas 4';
+        if (num === '5' || num === 'v') return 'Kelas 5';
+        if (num === '6' || num === 'vi') return 'Kelas 6';
+      }
+      
+      // General fallbacks based on substrings
+      if (clean.includes('1') || clean.includes(' i') || clean.endsWith(' i')) return 'Kelas 1';
+      if (clean.includes('2') || clean.includes(' ii') || clean.endsWith(' ii')) return 'Kelas 2';
+      if (clean.includes('3') || clean.includes(' iii') || clean.endsWith(' iii')) return 'Kelas 3';
+      if (clean.includes('4') || clean.includes(' iv') || clean.endsWith(' iv')) return 'Kelas 4';
+      if (clean.includes('5') || clean.includes(' v') || clean.endsWith(' v')) return 'Kelas 5';
+      if (clean.includes('6') || clean.includes(' vi') || clean.endsWith(' vi')) return 'Kelas 6';
+
+      return input; // Fallback to raw string if unable to normalize
+    };
+
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -908,22 +955,80 @@ function AppContent() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
 
-        let successCount = 0;
-        for (let i = 1; i < jsonData.length; i++) {
-          const row = jsonData[i];
-          if (row.length >= 2) {
-            const studentClass = String(row[0]).trim();
-            const studentName = String(row[1]).trim();
-            
-            if (studentClass && studentName && !students.some(s => s.student_name === studentName && s.class === studentClass)) {
-              await addDoc(collection(db, 'students'), { student_name: studentName, class: studentClass, schoolEmail });
-              successCount++;
-            }
+        if (!jsonData || jsonData.length < 2) {
+          displayToast('Gagal mengimpor: File Excel kosong atau tidak memiliki data.', true);
+          return;
+        }
+
+        // Smart Column Detection based on Header Row
+        const headerRow = jsonData[0];
+        let classColIndex = 0;
+        let nameColIndex = 1;
+
+        if (headerRow && headerRow.length >= 2) {
+          const col1 = String(headerRow[0] || '').toLowerCase();
+          const col2 = String(headerRow[1] || '').toLowerCase();
+          // If first column looks like Name and second column looks like Class
+          if ((col1.includes('nama') || col1.includes('siswa')) && (col2.includes('kelas') || col2.includes('grade') || col2.includes('kls'))) {
+            classColIndex = 1;
+            nameColIndex = 0;
           }
         }
-        displayToast(`✅ Berhasil mengimpor ${successCount} siswa!`);
+
+        let successCount = 0;
+        let invalidCount = 0;
+        
+        for (let i = 1; i < jsonData.length; i++) {
+          const row = jsonData[i];
+          if (!row || row.length === 0) continue;
+
+          const rawClassVal = row[classColIndex];
+          const rawNameVal = row[nameColIndex];
+
+          // Guard against undefined/null cells
+          const rawClass = (rawClassVal !== undefined && rawClassVal !== null) ? String(rawClassVal).trim() : '';
+          const rawName = (rawNameVal !== undefined && rawNameVal !== null) ? String(rawNameVal).trim() : '';
+
+          // Skip completely empty rows
+          if (!rawClass && !rawName) continue;
+
+          // Skip header repetitions or empty/undefined placeholder cells
+          if (rawClass.toLowerCase() === 'kelas' || rawName.toLowerCase() === 'nama siswa' || rawClass.toLowerCase() === 'undefined' || rawName.toLowerCase() === 'undefined') {
+            continue;
+          }
+
+          const studentClass = normalizeClass(rawClass);
+          const studentName = rawName;
+
+          // Validation against strictly allowed classes in UI
+          const allowedClasses = ['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'];
+          if (!studentName || !studentClass || !allowedClasses.includes(studentClass)) {
+            invalidCount++;
+            continue;
+          }
+
+          const isDuplicate = students.some(s => s.student_name.toLowerCase() === studentName.toLowerCase() && s.class === studentClass);
+          if (!isDuplicate) {
+            await addDoc(collection(db, 'students'), { student_name: studentName, class: studentClass, schoolEmail });
+            successCount++;
+          }
+        }
+
+        if (successCount > 0) {
+          if (invalidCount > 0) {
+            displayToast(`✅ Berhasil mengimpor ${successCount} siswa. (${invalidCount} baris diabaikan karena format kelas tidak dikenali)`, false);
+          } else {
+            displayToast(`✅ Berhasil mengimpor ${successCount} siswa!`);
+          }
+        } else if (invalidCount > 0) {
+          displayToast(`❌ Gagal: Format data kelas tidak sesuai. Pastikan mengisi Kelas 1 s/d Kelas 6.`, true);
+        } else {
+          displayToast('ℹ️ Seluruh data siswa dalam file sudah terdaftar.', false);
+        }
       } catch (error) {
-        displayToast('Gagal mengimpor file Excel.', true);
+        addLog(`Excel Import Error: ${error instanceof Error ? error.message : String(error)}`);
+        displayToast('Gagal mengimpor file Excel. Silakan periksa format file.', true);
+        handleFirestoreError(error, OperationType.WRITE, 'students');
       }
     };
     reader.readAsArrayBuffer(file);
