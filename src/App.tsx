@@ -28,6 +28,41 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+const isClassMatch = (studentClass: string, filterClass: string): boolean => {
+  if (!studentClass || !filterClass) return false;
+  
+  const normalize = (cls: string): string => {
+    let clean = cls.trim().toLowerCase();
+    
+    // Convert roman numerals to numbers
+    clean = clean
+      .replace(/\bvi\b/gi, '6')
+      .replace(/\bv\b/gi, '5')
+      .replace(/\biv\b/gi, '4')
+      .replace(/\biii\b/gi, '3')
+      .replace(/\bii\b/gi, '2')
+      .replace(/\bi\b/gi, '1');
+      
+    // Remove "kelas" or "kls" prefixes
+    clean = clean.replace(/^(kelas|kls)\s*/gi, '');
+    
+    // Keep only letters and numbers
+    return clean.replace(/[^a-z0-9]/gi, '');
+  };
+
+  const normStudent = normalize(studentClass);
+  const normFilter = normalize(filterClass);
+
+  if (normStudent === normFilter) return true;
+
+  // If the filter is just a single digit (1-6) e.g. "1" or "4", allow prefix matching (e.g. "1a" or "4b" starts with "1" or "4")
+  if (/^[1-6]$/.test(normFilter)) {
+    return normStudent.startsWith(normFilter);
+  }
+
+  return false;
+};
+
 interface ErrorBoundaryProps {
   children: React.ReactNode;
 }
@@ -179,6 +214,7 @@ function AppContent() {
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordTarget, setPasswordTarget] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [confirmDeleteClass, setConfirmDeleteClass] = useState<string | null>(null);
 
   // Debug State
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
@@ -789,9 +825,12 @@ function AppContent() {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     
+    const studentObj = students.find(s => s.student_name === selectedStudent && isClassMatch(s.class, selectedClass));
+    const actualClass = studentObj ? studentObj.class : selectedClass;
+
     const isDuplicate = habitRecords.some(item => 
       item.student_name === selectedStudent && 
-      item.class === selectedClass && 
+      item.class === actualClass && 
       item.date === selectedDate
     );
 
@@ -802,7 +841,7 @@ function AppContent() {
 
     const data = {
       student_name: selectedStudent,
-      class: selectedClass,
+      class: actualClass,
       date: selectedDate,
       wake_time: formData.get('wake-time') as string,
       prayer_subuh: formData.get('prayer-subuh') === 'on',
@@ -875,6 +914,24 @@ function AppContent() {
       } catch (error) {
         displayToast('Gagal menghapus siswa.', true);
       }
+    }
+  };
+
+  const handleDeleteClassStudents = async (className: string) => {
+    const classStudents = students.filter(s => s.class === className);
+    if (classStudents.length === 0) {
+      displayToast('Tidak ada siswa di kelas ini.', true);
+      return;
+    }
+
+    try {
+      const deletePromises = classStudents.map(student => deleteDoc(doc(db, 'students', student.id)));
+      await Promise.all(deletePromises);
+      displayToast(`✅ Seluruh siswa di ${className} berhasil dihapus!`);
+      setConfirmDeleteClass(null);
+    } catch (error) {
+      displayToast('Gagal menghapus semua siswa di kelas ini.', true);
+      console.error(error);
     }
   };
 
@@ -1159,8 +1216,8 @@ function AppContent() {
       );
     }
 
-    const classStudents = students.filter(s => s.class === selectedClass).sort((a,b) => a.student_name.localeCompare(b.student_name));
-    const submittedOnDate = habitRecords.filter(item => item.date === selectedDate && item.class === selectedClass).map(item => item.student_name);
+    const classStudents = students.filter(s => isClassMatch(s.class, selectedClass)).sort((a,b) => a.student_name.localeCompare(b.student_name));
+    const submittedOnDate = habitRecords.filter(item => item.date === selectedDate && isClassMatch(item.class, selectedClass)).map(item => item.student_name);
 
     return (
       <div className="bg-white rounded-3xl shadow-2xl p-8">
@@ -1318,7 +1375,36 @@ function AppContent() {
             if (classStudents.length === 0) return null;
             return (
               <div key={className} className="bg-gray-50 rounded-2xl p-6">
-                <h3 className="text-xl font-bold mb-4 text-red-700">{className} ({classStudents.length} siswa)</h3>
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2 mb-4">
+                  <h3 className="text-xl font-bold text-red-700">{className} ({classStudents.length} siswa)</h3>
+                  {confirmDeleteClass !== className ? (
+                    <button 
+                      onClick={() => setConfirmDeleteClass(className)} 
+                      className="bg-red-100 hover:bg-red-200 text-red-700 py-1.5 px-3.5 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors self-start sm:self-auto"
+                      title={`Hapus seluruh siswa kelas ${className}`}
+                    >
+                      🗑️ Hapus Semua Siswa {className}
+                    </button>
+                  ) : (
+                    <div className="bg-red-50 border-2 border-red-200 rounded-xl p-3 flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+                      <span className="text-xs text-red-700 font-bold">⚠️ Yakin hapus {classStudents.length} siswa?</span>
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => handleDeleteClassStudents(className)} 
+                          className="bg-red-600 hover:bg-red-700 text-white py-1 px-3 rounded-lg text-xs font-bold transition-colors"
+                        >
+                          Ya, Hapus
+                        </button>
+                        <button 
+                          onClick={() => setConfirmDeleteClass(null)} 
+                          className="bg-gray-200 hover:bg-gray-300 text-gray-700 py-1 px-3 rounded-lg text-xs font-bold transition-colors"
+                        >
+                          Batal
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <div className="space-y-2">
                   {classStudents.map(student => (
                     <div key={student.id} className="student-item bg-white p-4 rounded-xl flex justify-between items-center border-2 border-gray-200">
@@ -1343,7 +1429,7 @@ function AppContent() {
 
   const renderDailyReportPage = () => {
     const filteredRecords = habitRecords.filter(record => {
-      if (selectedReportClass && record.class !== selectedReportClass) return false;
+      if (selectedReportClass && !isClassMatch(record.class, selectedReportClass)) return false;
       return true;
     });
 
@@ -1407,11 +1493,11 @@ function AppContent() {
   const renderMonthlyReportPage = () => {
     const filteredRecords = habitRecords.filter(record => {
       const recordDate = new Date(record.date);
-      if (selectedReportClass && record.class !== selectedReportClass) return false;
+      if (selectedReportClass && !isClassMatch(record.class, selectedReportClass)) return false;
       return recordDate.getMonth() + 1 === selectedMonth && recordDate.getFullYear() === selectedYear;
     });
 
-    const filteredStudents = selectedReportClass ? students.filter(s => s.class === selectedReportClass) : students;
+    const filteredStudents = selectedReportClass ? students.filter(s => isClassMatch(s.class, selectedReportClass)) : students;
 
     const studentAverages = filteredStudents.map(student => {
       const studentRecords = filteredRecords.filter(r => r.student_name === student.student_name && r.class === student.class);
@@ -1539,11 +1625,11 @@ function AppContent() {
       const recordDate = new Date(record.date);
       const isFirstHalf = recordDate.getMonth() < 6; // Jan - Jun
       const recordSemester = isFirstHalf ? 2 : 1;
-      if (selectedReportClass && record.class !== selectedReportClass) return false;
+      if (selectedReportClass && !isClassMatch(record.class, selectedReportClass)) return false;
       return recordSemester === selectedSemester && recordDate.getFullYear() === selectedSemesterYear;
     });
 
-    const filteredStudents = selectedReportClass ? students.filter(s => s.class === selectedReportClass) : students;
+    const filteredStudents = selectedReportClass ? students.filter(s => isClassMatch(s.class, selectedReportClass)) : students;
 
     const studentAverages = filteredStudents.map(student => {
       const studentRecords = filteredRecords.filter(r => r.student_name === student.student_name && r.class === student.class);
