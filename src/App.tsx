@@ -223,6 +223,15 @@ function AppContent() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [formSubmitted, setFormSubmitted] = useState(false);
 
+  const getActiveClasses = () => {
+    const studentClasses = students.map(s => s.class).filter(Boolean);
+    const baseClasses = ['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'];
+    const all = Array.from(new Set([...baseClasses, ...studentClasses]));
+    return all.sort((a, b) => {
+      return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  };
+
   // Report State
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -832,8 +841,16 @@ function AppContent() {
   const handleAddStudent = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const studentName = formData.get('new-student-name') as string;
-    const studentClass = formData.get('new-student-class') as string;
+    const studentName = (formData.get('new-student-name') as string || '').trim();
+    const grade = formData.get('new-student-grade') as string;
+    const rombel = (formData.get('new-student-rombel') as string || '').trim().toUpperCase();
+
+    if (!grade || !studentName) {
+      displayToast('Nama dan Tingkat Kelas wajib diisi!', true);
+      return;
+    }
+
+    const studentClass = rombel ? `${grade}${rombel}` : grade;
 
     const isDuplicate = students.some(s => s.student_name.toLowerCase() === studentName.toLowerCase() && s.class === studentClass);
     if (isDuplicate) {
@@ -906,45 +923,52 @@ function AppContent() {
     }
 
     const normalizeClass = (input: string): string => {
-      const clean = input.trim().toLowerCase();
-      
-      // Direct matches
-      if (clean === 'kelas 1' || clean === 'kelas i') return 'Kelas 1';
-      if (clean === 'kelas 2' || clean === 'kelas ii') return 'Kelas 2';
-      if (clean === 'kelas 3' || clean === 'kelas iii') return 'Kelas 3';
-      if (clean === 'kelas 4' || clean === 'kelas iv') return 'Kelas 4';
-      if (clean === 'kelas 5' || clean === 'kelas v') return 'Kelas 5';
-      if (clean === 'kelas 6' || clean === 'kelas vi') return 'Kelas 6';
-      
-      // Numbers or Roman Numerals alone
-      if (clean === '1' || clean === 'i') return 'Kelas 1';
-      if (clean === '2' || clean === 'ii') return 'Kelas 2';
-      if (clean === '3' || clean === 'iii') return 'Kelas 3';
-      if (clean === '4' || clean === 'iv') return 'Kelas 4';
-      if (clean === '5' || clean === 'v') return 'Kelas 5';
-      if (clean === '6' || clean === 'vi') return 'Kelas 6';
-      
-      // Check prefix / regex matching (e.g. "kelas 4a" or "kelas 1-b" or "kelas v a")
-      const matchKelasNum = clean.match(/^kelas\s*([1-6i|v|x]+)/i);
-      if (matchKelasNum) {
-        const num = matchKelasNum[1];
-        if (num === '1' || num === 'i') return 'Kelas 1';
-        if (num === '2' || num === 'ii') return 'Kelas 2';
-        if (num === '3' || num === 'iii') return 'Kelas 3';
-        if (num === '4' || num === 'iv') return 'Kelas 4';
-        if (num === '5' || num === 'v') return 'Kelas 5';
-        if (num === '6' || num === 'vi') return 'Kelas 6';
-      }
-      
-      // General fallbacks based on substrings
-      if (clean.includes('1') || clean.includes(' i') || clean.endsWith(' i')) return 'Kelas 1';
-      if (clean.includes('2') || clean.includes(' ii') || clean.endsWith(' ii')) return 'Kelas 2';
-      if (clean.includes('3') || clean.includes(' iii') || clean.endsWith(' iii')) return 'Kelas 3';
-      if (clean.includes('4') || clean.includes(' iv') || clean.endsWith(' iv')) return 'Kelas 4';
-      if (clean.includes('5') || clean.includes(' v') || clean.endsWith(' v')) return 'Kelas 5';
-      if (clean.includes('6') || clean.includes(' vi') || clean.endsWith(' vi')) return 'Kelas 6';
+      const clean = input.trim();
+      if (!clean) return '';
 
-      return input; // Fallback to raw string if unable to normalize
+      const romanToNum = (str: string): string => {
+        return str
+          .replace(/\bvi\b/gi, '6')
+          .replace(/\bv\b/gi, '5')
+          .replace(/\biv\b/gi, '4')
+          .replace(/\biii\b/gi, '3')
+          .replace(/\bii\b/gi, '2')
+          .replace(/\bi\b/gi, '1');
+      };
+
+      let normalized = clean.toLowerCase();
+      
+      // Remove "kelas" or "kls" prefix if any
+      normalized = normalized.replace(/^(kelas|kls)\s*/i, '');
+      
+      // Translate standalone Roman numerals
+      normalized = romanToNum(normalized);
+
+      // Match standard format: digit (1-6) followed optionally by rombel (a-z0-9, space, hyphen)
+      const match = normalized.match(/^([1-6])\s*[-_/\s]*([a-z0-9\s\-]+)?/i);
+      if (match) {
+        const grade = match[1];
+        const rombel = (match[2] || '').trim().toUpperCase();
+        if (rombel) {
+          return rombel.length === 1 ? `Kelas ${grade}${rombel}` : `Kelas ${grade} ${rombel}`;
+        }
+        return `Kelas ${grade}`;
+      }
+
+      // Fallback: search for any digit 1-6
+      const fallbackMatch = normalized.match(/([1-6])/);
+      if (fallbackMatch) {
+        const grade = fallbackMatch[1];
+        const idx = normalized.indexOf(grade);
+        const rombel = normalized.substring(idx + 1).replace(/^[-_/\s]+/, '').trim().toUpperCase();
+        if (rombel) {
+          return rombel.length === 1 ? `Kelas ${grade}${rombel}` : `Kelas ${grade} ${rombel}`;
+        }
+        return `Kelas ${grade}`;
+      }
+
+      // Return capitalized input as ultimate fallback
+      return clean.charAt(0).toUpperCase() + clean.slice(1);
     };
 
     const reader = new FileReader();
@@ -1000,9 +1024,11 @@ function AppContent() {
           const studentClass = normalizeClass(rawClass);
           const studentName = rawName;
 
-          // Validation against strictly allowed classes in UI
-          const allowedClasses = ['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'];
-          if (!studentName || !studentClass || !allowedClasses.includes(studentClass)) {
+          // Validation: Must start with a grade between Kelas 1 and Kelas 6
+          const allowedBaseClasses = ['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'];
+          const isValidClass = allowedBaseClasses.some(base => studentClass === base || studentClass.startsWith(base));
+          
+          if (!studentName || !studentClass || !isValidClass) {
             invalidCount++;
             continue;
           }
@@ -1016,12 +1042,12 @@ function AppContent() {
 
         if (successCount > 0) {
           if (invalidCount > 0) {
-            displayToast(`✅ Berhasil mengimpor ${successCount} siswa. (${invalidCount} baris diabaikan karena format kelas tidak dikenali)`, false);
+            displayToast(`✅ Berhasil mengimpor ${successCount} siswa. (${invalidCount} baris diabaikan karena kelas tidak valid)`, false);
           } else {
             displayToast(`✅ Berhasil mengimpor ${successCount} siswa!`);
           }
         } else if (invalidCount > 0) {
-          displayToast(`❌ Gagal: Format data kelas tidak sesuai. Pastikan mengisi Kelas 1 s/d Kelas 6.`, true);
+          displayToast(`❌ Gagal: Format kelas di Excel tidak valid. Pastikan berisi Kelas 1 s/d Kelas 6 (bisa kelas paralel/rombel, misal: Kelas 1A, Kelas 1B, 2C).`, true);
         } else {
           displayToast('ℹ️ Seluruh data siswa dalam file sudah terdaftar.', false);
         }
@@ -1038,9 +1064,11 @@ function AppContent() {
   const handleDownloadTemplate = () => {
     const templateData = [
       ['Kelas', 'Nama Siswa'],
-      ['Kelas 1', 'Budi Santoso'],
-      ['Kelas 2', 'Siti Aminah'],
-      ['Kelas 3', 'Andi Darmawan']
+      ['Kelas 1A', 'Budi Santoso'],
+      ['Kelas 1B', 'Siti Aminah'],
+      ['Kelas 2A', 'Andi Darmawan'],
+      ['Kelas 2B', 'Rina Wijaya'],
+      ['Kelas 3', 'Eko Susilo']
     ];
     const ws = XLSX.utils.aoa_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
@@ -1152,7 +1180,7 @@ function AppContent() {
                 <label className="block text-sm font-bold mb-2">Pilih Kelas:</label>
                 <select value={selectedClass} onChange={(e) => {setSelectedClass(e.target.value); setSelectedStudent('');}} required className="w-full p-3 border-2 border-purple-300 rounded-xl focus:border-purple-500 focus:outline-none">
                   <option value="">-- Pilih Kelas --</option>
-                  {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(c => <option key={c} value={c}>{c}</option>)}
+                  {getActiveClasses().map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div>
@@ -1251,20 +1279,24 @@ function AppContent() {
         <div className="bg-gradient-to-r from-red-100 to-pink-100 p-6 rounded-2xl mb-6">
           <h3 className="text-xl font-bold mb-4">➕ Tambah Siswa Baru</h3>
           <form onSubmit={handleAddStudent} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-bold mb-2">Kelas:</label>
-                <select name="new-student-class" required className="w-full p-3 border-2 border-red-300 rounded-xl focus:border-red-500 focus:outline-none">
-                  <option value="">-- Pilih Kelas --</option>
+                <label className="block text-sm font-bold mb-2">Tingkat Kelas:</label>
+                <select name="new-student-grade" required className="w-full p-3 border-2 border-red-300 rounded-xl focus:border-red-500 focus:outline-none">
+                  <option value="">-- Pilih Tingkat Kelas --</option>
                   {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
+              </div>
+              <div>
+                <label className="block text-sm font-bold mb-2">Rombel / Kelas Paralel (Opsional):</label>
+                <input type="text" name="new-student-rombel" placeholder="Misal: A, B, atau Ibnu Sina" className="w-full p-3 border-2 border-red-300 rounded-xl focus:border-red-500 focus:outline-none" />
               </div>
               <div>
                 <label className="block text-sm font-bold mb-2">Nama Siswa:</label>
                 <input type="text" name="new-student-name" required placeholder="Masukkan nama lengkap siswa" className="w-full p-3 border-2 border-red-300 rounded-xl focus:border-red-500 focus:outline-none" />
               </div>
             </div>
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap gap-4 items-center">
               <button type="submit" className="bg-green-500 hover:bg-green-600 text-white py-3 px-8 rounded-xl font-bold">➕ Tambah Siswa</button>
               <label className="bg-blue-500 hover:bg-blue-600 text-white py-3 px-8 rounded-xl font-bold cursor-pointer inline-flex items-center gap-2">
                 📁 Impor dari Excel
@@ -1274,11 +1306,14 @@ function AppContent() {
                 📥 Download Template Excel
               </button>
             </div>
+            <p className="text-xs text-red-600 mt-2 font-medium">
+              * Tips Rombel/Kelas Paralel: Anda dapat memasukkan nama rombel (seperti A, B, C) baik di form manual di atas maupun di file Excel impor. Sistem akan secara otomatis mengelompokkannya secara dinamis!
+            </p>
           </form>
         </div>
 
         <div className="space-y-4">
-          {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(className => {
+          {getActiveClasses().map(className => {
             const classStudents = students.filter(s => s.class === className).sort((a,b) => a.student_name.localeCompare(b.student_name));
             if (classStudents.length === 0) return null;
             return (
@@ -1326,7 +1361,7 @@ function AppContent() {
             className="p-3 border-2 border-blue-300 rounded-xl focus:border-blue-500 focus:outline-none"
           >
             <option value="">Semua Kelas</option>
-            {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(c => <option key={c} value={c}>{c}</option>)}
+            {getActiveClasses().map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
 
@@ -1400,7 +1435,7 @@ function AppContent() {
         'Rata-rata Skor': student.averageScore,
       }));
     } else {
-      chartData = ['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(className => {
+      chartData = getActiveClasses().map(className => {
         const classStudents = studentAverages.filter((s: any) => s.class === className);
         const avgScore = classStudents.length > 0 ? Math.round(classStudents.reduce((sum, s: any) => sum + s.averageScore, 0) / classStudents.length) : 0;
         return {
@@ -1424,7 +1459,7 @@ function AppContent() {
             className="p-3 border-2 border-yellow-300 rounded-xl focus:border-yellow-500 focus:outline-none"
           >
             <option value="">Semua Kelas</option>
-            {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(c => <option key={c} value={c}>{c}</option>)}
+            {getActiveClasses().map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <select 
             value={selectedMonth} 
@@ -1665,7 +1700,7 @@ function AppContent() {
             className="p-3 border-2 border-purple-300 rounded-xl focus:border-purple-500 focus:outline-none"
           >
             <option value="">Semua Kelas</option>
-            {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(c => <option key={c} value={c}>{c}</option>)}
+            {getActiveClasses().map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <select 
             value={selectedSemester} 
