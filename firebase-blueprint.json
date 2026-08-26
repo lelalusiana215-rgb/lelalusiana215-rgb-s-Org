@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "ApprovedSchool": {
+      "title": "Approved School",
+      "description": "An approved school email",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "addedAt": { "type": "string" }
+      },
+      "required": ["email", "addedAt"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "A student in the school",
+      "type": "object",
+      "properties": {
+        "student_name": { "type": "string" },
+        "class": { "type": "string" },
+        "schoolEmail": { "type": "string" }
+      },
+      "required": ["student_name", "class", "schoolEmail"]
+    },
+    "HabitRecord": {
+      "title": "Habit Record",
+      "description": "A daily habit record for a student",
+      "type": "object",
+      "properties": {
+        "student_name": { "type": "string" },
+        "class": { "type": "string" },
+        "date": { "type": "string" },
+        "wake_time": { "type": "string" },
+        "prayer_subuh": { "type": "boolean" },
+        "prayer_dhuhur": { "type": "boolean" },
+        "prayer_ashar": { "type": "boolean" },
+        "prayer_maghrib": { "type": "boolean" },
+        "prayer_isya": { "type": "boolean" },
+        "dta": { "type": "boolean" },
+        "exercise": { "type": "boolean" },
+        "exercise_type": { "type": "string" },
+        "healthy_food": { "type": "boolean" },
+        "food_menu": { "type": "string" },
+        "study_duration": { "type": "string" },
+        "social_activity": { "type": "string" },
+        "sleep_time": { "type": "string" },
+        "total_score": { "type": "number" },
+        "category": { "type": "string" },
+        "schoolEmail": { "type": "string" }
+      },
+      "required": ["student_name", "class", "date", "total_score", "category", "schoolEmail"]
+    }
+  },
+  "firestore": {
+    "/approvedSchools/{email}": {
+      "schema": "ApprovedSchool",
+      "description": "Collection of approved school emails"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Collection of students"
+    },
+    "/habitRecords/{recordId}": {
+      "schema": "HabitRecord",
+      "description": "Collection of daily habit records"
+    }
+  }
+}

@@ -1,0 +1,139 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: approvedSchools
+    // Document ID: email
+    // Fields:
+    //   - email: string (required)
+    //   - addedAt: string (required)
+    //
+    // Collection: students
+    // Document ID: auto-generated
+    // Fields:
+    //   - student_name: string (required)
+    //   - class: string (required)
+    //   - schoolEmail: string (required)
+    //
+    // Collection: habitRecords
+    // Document ID: auto-generated
+    // Fields:
+    //   - student_name: string (required)
+    //   - class: string (required)
+    //   - date: string (required)
+    //   - wake_time: string
+    //   - prayer_subuh: boolean
+    //   - prayer_dhuhur: boolean
+    //   - prayer_ashar: boolean
+    //   - prayer_maghrib: boolean
+    //   - prayer_isya: boolean
+    //   - dta: boolean
+    //   - exercise: boolean
+    //   - exercise_type: string
+    //   - healthy_food: boolean
+    //   - food_menu: string
+    //   - study_duration: string
+    //   - social_activity: string
+    //   - sleep_time: string
+    //   - total_score: number (required)
+    //   - category: string (required)
+    //   - schoolEmail: string (required)
+    //
+    // Collection: teachers
+    // Document ID: email
+    // Fields:
+    //   - email: string (required)
+    //   - name: string (required)
+    //   - schoolEmail: string (required)
+    //   - addedAt: string (required)
+    //
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      return isAuthenticated() && request.auth.token.email == 'lelalusiana215@gmail.com';
+    }
+
+    function getTeacherData() {
+      return get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data;
+    }
+
+    function isSchoolAdmin(schoolEmail) {
+      return isAuthenticated() && (request.auth.token.email == schoolEmail || isOwner());
+    }
+
+    function isTeacherOfSchool(schoolEmail) {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/teachers/$(request.auth.token.email)) &&
+             get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.schoolEmail == schoolEmail;
+    }
+
+    function canAccessSchoolData(schoolEmail) {
+      return isSchoolAdmin(schoolEmail) || isTeacherOfSchool(schoolEmail) || isOwner();
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    match /approvedSchools/{email} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner();
+    }
+
+    function isValidTeacher(data) {
+      return data.email is string && data.email.size() > 0 && data.email.size() < 100 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.schoolEmail is string && data.schoolEmail.size() > 0 && data.schoolEmail.size() < 100 &&
+             data.addedAt is string;
+    }
+
+    match /teachers/{teacherEmail} {
+      allow read: if isAuthenticated() && (request.auth.token.email == teacherEmail || isOwner() || isSchoolAdmin(resource.data.schoolEmail));
+      allow create: if isAuthenticated() && hasRequiredFields(['email', 'name', 'schoolEmail', 'addedAt']) && isValidTeacher(request.resource.data) && (isOwner() || request.auth.token.email == request.resource.data.schoolEmail);
+      allow update: if isAuthenticated() && hasRequiredFields(['email', 'name', 'schoolEmail', 'addedAt']) && isValidTeacher(request.resource.data) && (isOwner() || request.auth.token.email == request.resource.data.schoolEmail);
+      allow delete: if isAuthenticated() && (isOwner() || request.auth.token.email == resource.data.schoolEmail);
+    }
+
+    function isValidStudent(data) {
+      return data.student_name is string && data.student_name.size() > 0 && data.student_name.size() < 100 &&
+             data.class is string && data.class.size() > 0 && data.class.size() < 50 &&
+             data.schoolEmail is string && data.schoolEmail.size() > 0;
+    }
+
+    function isValidHabitRecord(data) {
+      return data.student_name is string && data.student_name.size() > 0 && data.student_name.size() < 100 &&
+             data.class is string && data.class.size() > 0 && data.class.size() < 50 &&
+             data.date is string && data.date.size() > 0 && data.date.size() < 20 &&
+             data.total_score is number && data.total_score >= 0 && data.total_score <= 100 &&
+             data.category is string && data.category.size() > 0 && data.category.size() < 50 &&
+             data.schoolEmail is string && data.schoolEmail.size() > 0;
+    }
+
+    match /students/{studentId} {
+      // Allow read for students to fill form (via schoolEmail query) or for authorized staff
+      allow read: if (isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail)) || (request.query.limit <= 500); 
+      allow create: if isAuthenticated() && canAccessSchoolData(request.resource.data.schoolEmail) && isValidStudent(request.resource.data);
+      allow update: if isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail) && isValidStudent(request.resource.data);
+      allow delete: if isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail);
+    }
+
+    match /habitRecords/{recordId} {
+      // Allow read for authorized staff
+      allow read: if isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail);
+      // Allow create for anyone (students) but must have valid schoolEmail and schema
+      allow create: if hasRequiredFields(['student_name', 'class', 'date', 'total_score', 'category', 'schoolEmail']) && 
+                    isValidHabitRecord(request.resource.data) &&
+                    exists(/databases/$(database)/documents/approvedSchools/$(request.resource.data.schoolEmail));
+      allow update: if isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail) && isValidHabitRecord(request.resource.data);
+      allow delete: if isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail);
+    }
+  }
+}
