@@ -70,9 +70,7 @@ service cloud.firestore {
     }
 
     function isTeacherOfSchool(schoolEmail) {
-      return isAuthenticated() && 
-             exists(/databases/$(database)/documents/teachers/$(request.auth.token.email)) &&
-             get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data.schoolEmail == schoolEmail;
+      return isAuthenticated() && (getTeacherData().schoolEmail == schoolEmail);
     }
 
     function canAccessSchoolData(schoolEmail) {

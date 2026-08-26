@@ -213,14 +213,6 @@ function AppContent() {
   const [students, setStudents] = useState<Student[]>([]);
   const [habitRecords, setHabitRecords] = useState<HabitRecord[]>([]);
 
-  const getAvailableClasses = () => {
-    const dbClasses = Array.from(new Set(students.map(s => s.class))).filter(Boolean) as string[];
-    if (dbClasses.length > 0) {
-      return dbClasses.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
-    }
-    return ['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'];
-  };
-
   const [toastMessage, setToastMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [isErrorToast, setIsErrorToast] = useState(false);
@@ -840,25 +832,10 @@ function AppContent() {
   const handleAddStudent = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    const studentName = (formData.get('new-student-name') as string || '').trim();
-    const studentGrade = formData.get('new-student-grade') as string;
-    const studentRombel = (formData.get('new-student-rombel') as string || '').trim();
+    const studentName = formData.get('new-student-name') as string;
+    const studentClass = formData.get('new-student-class') as string;
 
-    if (!studentGrade) {
-      displayToast('Pilih tingkat kelas terlebih dahulu.', true);
-      return;
-    }
-
-    let studentClass = studentGrade;
-    if (studentRombel) {
-      if (studentRombel.length === 1) {
-        studentClass = `${studentGrade}${studentRombel.toUpperCase()}`;
-      } else {
-        studentClass = `${studentGrade} ${studentRombel}`;
-      }
-    }
-
-    const isDuplicate = students.some(s => s.student_name.toLowerCase() === studentName.toLowerCase() && s.class.toLowerCase() === studentClass.toLowerCase());
+    const isDuplicate = students.some(s => s.student_name.toLowerCase() === studentName.toLowerCase() && s.class === studentClass);
     if (isDuplicate) {
       displayToast(`Siswa "${studentName}" sudah ada di ${studentClass}!`, true);
       return;
@@ -934,63 +911,19 @@ function AppContent() {
         let successCount = 0;
         for (let i = 1; i < jsonData.length; i++) {
           const row = jsonData[i];
-          // Backward compatibility: we accept rows with at least 2 elements
-          if (row && row.length >= 2) {
-            let rawGrade = row[0];
-            let rawRombel: any = '';
-            let rawName = row[1];
-
-            // If the row has 3 or more elements, parse it as [Tingkat Kelas, Rombel, Nama Siswa]
-            if (row.length >= 3 && row[2] !== undefined && row[2] !== null && String(row[2]).trim() !== '') {
-              rawGrade = row[0];
-              rawRombel = row[1];
-              rawName = row[2];
-            }
+          if (row.length >= 2) {
+            const studentClass = String(row[0]).trim();
+            const studentName = String(row[1]).trim();
             
-            if (rawGrade === undefined || rawGrade === null || rawName === undefined || rawName === null) {
-              continue;
-            }
-
-            const gradeStr = String(rawGrade).trim();
-            const rombelStr = rawRombel !== undefined && rawRombel !== null ? String(rawRombel).trim() : '';
-            const studentName = String(rawName).trim();
-            
-            if (gradeStr && studentName && 
-                gradeStr !== 'undefined' && studentName !== 'undefined' && 
-                gradeStr !== 'null' && studentName !== 'null') {
-              
-              // Standardize the class string exactly as in manual creation
-              let studentClass = gradeStr;
-              if (rombelStr && rombelStr !== 'undefined' && rombelStr !== 'null') {
-                if (rombelStr.length === 1) {
-                  studentClass = `${gradeStr}${rombelStr.toUpperCase()}`;
-                } else {
-                  studentClass = `${gradeStr} ${rombelStr}`;
-                }
-              }
-
-              const isDuplicate = students.some(s => 
-                s.student_name.toLowerCase() === studentName.toLowerCase() && 
-                s.class.toLowerCase() === studentClass.toLowerCase()
-              );
-
-              if (!isDuplicate) {
-                try {
-                  await addDoc(collection(db, 'students'), { student_name: studentName, class: studentClass, schoolEmail });
-                  successCount++;
-                } catch (dbError: any) {
-                  console.error("Failed to add student during Excel import:", studentName, dbError);
-                  throw dbError;
-                }
-              }
+            if (studentClass && studentName && !students.some(s => s.student_name === studentName && s.class === studentClass)) {
+              await addDoc(collection(db, 'students'), { student_name: studentName, class: studentClass, schoolEmail });
+              successCount++;
             }
           }
         }
         displayToast(`✅ Berhasil mengimpor ${successCount} siswa!`);
-      } catch (error: any) {
-        console.error("Excel import error:", error);
-        const errorMsg = error instanceof Error ? error.message : String(error);
-        displayToast(`Gagal mengimpor file Excel: ${errorMsg}`, true);
+      } catch (error) {
+        displayToast('Gagal mengimpor file Excel.', true);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -999,11 +932,10 @@ function AppContent() {
 
   const handleDownloadTemplate = () => {
     const templateData = [
-      ['Tingkat Kelas', 'Rombel / Paralel (Opsional)', 'Nama Siswa'],
-      ['Kelas 1', 'A', 'Budi Santoso'],
-      ['Kelas 1', 'B', 'Siti Aminah'],
-      ['Kelas 2', 'Umar', 'Andi Darmawan'],
-      ['Kelas 3', '', 'Rina Wijaya']
+      ['Kelas', 'Nama Siswa'],
+      ['Kelas 1', 'Budi Santoso'],
+      ['Kelas 2', 'Siti Aminah'],
+      ['Kelas 3', 'Andi Darmawan']
     ];
     const ws = XLSX.utils.aoa_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
@@ -1115,7 +1047,7 @@ function AppContent() {
                 <label className="block text-sm font-bold mb-2">Pilih Kelas:</label>
                 <select value={selectedClass} onChange={(e) => {setSelectedClass(e.target.value); setSelectedStudent('');}} required className="w-full p-3 border-2 border-purple-300 rounded-xl focus:border-purple-500 focus:outline-none">
                   <option value="">-- Pilih Kelas --</option>
-                  {getAvailableClasses().map(c => <option key={c} value={c}>{c}</option>)}
+                  {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               <div>
@@ -1215,23 +1147,12 @@ function AppContent() {
           <h3 className="text-xl font-bold mb-4">➕ Tambah Siswa Baru</h3>
           <form onSubmit={handleAddStudent} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-bold mb-2">Tingkat Kelas:</label>
-                  <select name="new-student-grade" required className="w-full p-3 border-2 border-red-300 rounded-xl focus:border-red-500 focus:outline-none">
-                    <option value="">-- Pilih Tingkat --</option>
-                    {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-bold mb-2">Rombel / Paralel (Opsional):</label>
-                  <input 
-                    type="text" 
-                    name="new-student-rombel" 
-                    placeholder="Contoh: A, B, Umar, Unggulan" 
-                    className="w-full p-3 border-2 border-red-300 rounded-xl focus:border-red-500 focus:outline-none" 
-                  />
-                </div>
+              <div>
+                <label className="block text-sm font-bold mb-2">Kelas:</label>
+                <select name="new-student-class" required className="w-full p-3 border-2 border-red-300 rounded-xl focus:border-red-500 focus:outline-none">
+                  <option value="">-- Pilih Kelas --</option>
+                  {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
               <div>
                 <label className="block text-sm font-bold mb-2">Nama Siswa:</label>
@@ -1248,21 +1169,11 @@ function AppContent() {
                 📥 Download Template Excel
               </button>
             </div>
-            
-            <div className="bg-white/80 border border-red-200 rounded-xl p-4 mt-4 text-xs text-red-800 space-y-1 shadow-inner">
-              <p className="font-bold">💡 Informasi Format Kolom Excel Baru (Mendukung Rombel / Paralel):</p>
-              <ul className="list-disc pl-4 space-y-1">
-                <li><b>Kolom A:</b> Tingkat Kelas <span className="text-gray-500">(wajib, contoh: Kelas 1, Kelas 2, dst)</span></li>
-                <li><b>Kolom B:</b> Rombel / Paralel <span className="text-gray-500">(opsional, contoh: A, B, Umar, Unggulan, atau biarkan kosong)</span></li>
-                <li><b>Kolom C:</b> Nama Siswa <span className="text-gray-500">(wajib, contoh: Budi Santoso)</span></li>
-              </ul>
-              <p className="text-gray-500 mt-1 italic">*Sistem cerdas kami tetap mendukung file Excel versi lama (2 kolom) secara otomatis!</p>
-            </div>
           </form>
         </div>
 
         <div className="space-y-4">
-          {getAvailableClasses().map(className => {
+          {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(className => {
             const classStudents = students.filter(s => s.class === className).sort((a,b) => a.student_name.localeCompare(b.student_name));
             if (classStudents.length === 0) return null;
             return (
@@ -1310,7 +1221,7 @@ function AppContent() {
             className="p-3 border-2 border-blue-300 rounded-xl focus:border-blue-500 focus:outline-none"
           >
             <option value="">Semua Kelas</option>
-            {getAvailableClasses().map(c => <option key={c} value={c}>{c}</option>)}
+            {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
 
@@ -1384,7 +1295,7 @@ function AppContent() {
         'Rata-rata Skor': student.averageScore,
       }));
     } else {
-      chartData = getAvailableClasses().map(className => {
+      chartData = ['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(className => {
         const classStudents = studentAverages.filter((s: any) => s.class === className);
         const avgScore = classStudents.length > 0 ? Math.round(classStudents.reduce((sum, s: any) => sum + s.averageScore, 0) / classStudents.length) : 0;
         return {
@@ -1408,7 +1319,7 @@ function AppContent() {
             className="p-3 border-2 border-yellow-300 rounded-xl focus:border-yellow-500 focus:outline-none"
           >
             <option value="">Semua Kelas</option>
-            {getAvailableClasses().map(c => <option key={c} value={c}>{c}</option>)}
+            {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <select 
             value={selectedMonth} 
@@ -1649,7 +1560,7 @@ function AppContent() {
             className="p-3 border-2 border-purple-300 rounded-xl focus:border-purple-500 focus:outline-none"
           >
             <option value="">Semua Kelas</option>
-            {getAvailableClasses().map(c => <option key={c} value={c}>{c}</option>)}
+            {['Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4', 'Kelas 5', 'Kelas 6'].map(c => <option key={c} value={c}>{c}</option>)}
           </select>
           <select 
             value={selectedSemester} 
