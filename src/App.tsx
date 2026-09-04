@@ -215,6 +215,7 @@ function AppContent() {
   const [passwordTarget, setPasswordTarget] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [confirmDeleteClass, setConfirmDeleteClass] = useState<string | null>(null);
+  const [isNonMuslimForm, setIsNonMuslimForm] = useState(false);
 
   // Debug State
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
@@ -793,10 +794,23 @@ function AppContent() {
       const minutes = parseInt(time[0]) * 60 + parseInt(time[1]);
       score += minutes <= 330 ? 100 : 50;
     }
-    const prayerCount = [
-      data.prayer_subuh, data.prayer_dhuhur, data.prayer_ashar,
-      data.prayer_maghrib, data.prayer_isya, data.dta
-    ].filter(Boolean).length;
+    const prayerCount = data.is_non_muslim
+      ? [
+          data.non_muslim_pagi,
+          data.non_muslim_malam,
+          data.non_muslim_kitab,
+          data.non_muslim_mingguan,
+          data.non_muslim_keluarga,
+          data.non_muslim_lainnya
+        ].filter(Boolean).length
+      : [
+          data.prayer_subuh,
+          data.prayer_dhuhur,
+          data.prayer_ashar,
+          data.prayer_maghrib,
+          data.prayer_isya,
+          data.dta
+        ].filter(Boolean).length;
     score += (prayerCount / 6) * 100;
     score += data.exercise ? 100 : 0;
     score += data.healthy_food ? 100 : 0;
@@ -839,17 +853,26 @@ function AppContent() {
       return;
     }
 
+    const isNonMuslimChecked = formData.get('worship-type') === 'non-islam';
+
     const data = {
       student_name: selectedStudent,
       class: actualClass,
       date: selectedDate,
       wake_time: formData.get('wake-time') as string,
-      prayer_subuh: formData.get('prayer-subuh') === 'on',
-      prayer_dhuhur: formData.get('prayer-dhuhur') === 'on',
-      prayer_ashar: formData.get('prayer-ashar') === 'on',
-      prayer_maghrib: formData.get('prayer-maghrib') === 'on',
-      prayer_isya: formData.get('prayer-isya') === 'on',
-      dta: formData.get('dta') === 'on',
+      is_non_muslim: isNonMuslimChecked,
+      prayer_subuh: !isNonMuslimChecked && formData.get('prayer-subuh') === 'on',
+      prayer_dhuhur: !isNonMuslimChecked && formData.get('prayer-dhuhur') === 'on',
+      prayer_ashar: !isNonMuslimChecked && formData.get('prayer-ashar') === 'on',
+      prayer_maghrib: !isNonMuslimChecked && formData.get('prayer-maghrib') === 'on',
+      prayer_isya: !isNonMuslimChecked && formData.get('prayer-isya') === 'on',
+      dta: !isNonMuslimChecked && formData.get('dta') === 'on',
+      non_muslim_pagi: isNonMuslimChecked && formData.get('non-muslim-pagi') === 'on',
+      non_muslim_malam: isNonMuslimChecked && formData.get('non-muslim-malam') === 'on',
+      non_muslim_kitab: isNonMuslimChecked && formData.get('non-muslim-kitab') === 'on',
+      non_muslim_mingguan: isNonMuslimChecked && formData.get('non-muslim-mingguan') === 'on',
+      non_muslim_keluarga: isNonMuslimChecked && formData.get('non-muslim-keluarga') === 'on',
+      non_muslim_lainnya: isNonMuslimChecked && formData.get('non-muslim-lainnya') === 'on',
       exercise: formData.get('exercise') === 'yes',
       exercise_type: formData.get('exercise-type') as string,
       healthy_food: formData.get('food') === 'yes',
@@ -868,6 +891,7 @@ function AppContent() {
       (e.target as HTMLFormElement).reset();
       setSelectedClass('');
       setSelectedStudent('');
+      setIsNonMuslimForm(false);
       if (isSharedMode) {
         setFormSubmitted(true);
       }
@@ -1267,15 +1291,68 @@ function AppContent() {
           </div>
 
           <div className="card-habit bg-green-100 p-6 rounded-2xl shadow-md">
-            <div className="flex items-center mb-4"><span className="text-4xl mr-3">🕌</span><h3 className="text-xl font-bold">2. Beribadah</h3></div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {['subuh', 'dhuhur', 'ashar', 'maghrib', 'isya'].map(p => (
-                <label key={p} className="flex items-center space-x-2 cursor-pointer">
-                  <input type="checkbox" name={`prayer-${p}`} className="w-5 h-5" /><span>Shalat {p.charAt(0).toUpperCase() + p.slice(1)}</span>
-                </label>
-              ))}
-              <label className="flex items-center space-x-2 cursor-pointer"><input type="checkbox" name="dta" className="w-5 h-5" /><span>Pengajian DTA</span></label>
+            <input type="hidden" name="worship-type" value={isNonMuslimForm ? 'non-islam' : 'islam'} />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+              <div className="flex items-center">
+                <span className="text-4xl mr-3">{isNonMuslimForm ? '⛪' : '🕌'}</span>
+                <h3 className="text-xl font-bold">2. Beribadah</h3>
+              </div>
+              <div className="flex bg-white/60 p-1 rounded-xl border border-green-200 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setIsNonMuslimForm(false)}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                    !isNonMuslimForm 
+                      ? 'bg-green-600 text-white shadow-sm' 
+                      : 'text-green-800 hover:bg-green-50'
+                  }`}
+                >
+                  Islam
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsNonMuslimForm(true)}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
+                    isNonMuslimForm 
+                      ? 'bg-purple-600 text-white shadow-sm' 
+                      : 'text-green-800 hover:bg-green-50'
+                  }`}
+                >
+                  Selain Islam (Kristen, dll)
+                </button>
+              </div>
             </div>
+
+            {!isNonMuslimForm ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {['subuh', 'dhuhur', 'ashar', 'maghrib', 'isya'].map(p => (
+                  <label key={p} className="flex items-center space-x-2 cursor-pointer bg-white/50 hover:bg-white/80 p-3 rounded-xl border border-green-200/50 transition-colors">
+                    <input type="checkbox" name={`prayer-${p}`} className="w-5 h-5 rounded accent-green-600" />
+                    <span className="text-sm font-medium">Shalat {p.charAt(0).toUpperCase() + p.slice(1)}</span>
+                  </label>
+                ))}
+                <label className="flex items-center space-x-2 cursor-pointer bg-white/50 hover:bg-white/80 p-3 rounded-xl border border-green-200/50 transition-colors">
+                  <input type="checkbox" name="dta" className="w-5 h-5 rounded accent-green-600" />
+                  <span className="text-sm font-medium">Pengajian DTA</span>
+                </label>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {[
+                  { name: 'non-muslim-pagi', label: 'Doa / Ibadah Pagi' },
+                  { name: 'non-muslim-malam', label: 'Doa / Ibadah Malam' },
+                  { name: 'non-muslim-kitab', label: 'Membaca Kitab Suci' },
+                  { name: 'non-muslim-mingguan', label: 'Ibadah Mingguan' },
+                  { name: 'non-muslim-keluarga', label: 'Doa Bersama Keluarga' },
+                  { name: 'non-muslim-lainnya', label: 'Ibadah Lainnya' },
+                ].map(item => (
+                  <label key={item.name} className="flex items-center space-x-2 cursor-pointer bg-white/50 hover:bg-white/80 p-3 rounded-xl border border-purple-200/50 transition-colors">
+                    <input type="checkbox" name={item.name} className="w-5 h-5 rounded accent-purple-600" />
+                    <span className="text-sm font-medium">{item.label}</span>
+                  </label>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="card-habit bg-blue-100 p-6 rounded-2xl shadow-md">
