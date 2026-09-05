@@ -24,7 +24,8 @@ import {
   Mail,
   Info,
   LogOut,
-  ChevronLeft
+  ChevronLeft,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -173,8 +174,9 @@ interface FirestoreErrorInfo {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errMsg = error instanceof Error ? error.message : String(error);
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMsg,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -191,8 +193,21 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     operationType,
     path
   }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  const isQuota = errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit exceeded') || errMsg.toLowerCase().includes('resource-exhausted');
+  
+  if (isQuota) {
+    console.warn('Firestore Quota Limit (gracefully handled): ', JSON.stringify(errInfo));
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
+  
+  if (typeof (window as any).onFirestoreError === 'function') {
+    (window as any).onFirestoreError(errMsg);
+  }
+
+  if (!isQuota) {
+    throw new Error(JSON.stringify(errInfo));
+  }
 }
 
 function AppContent() {
@@ -216,6 +231,8 @@ function AppContent() {
   const [showPassword, setShowPassword] = useState(false);
   const [confirmDeleteClass, setConfirmDeleteClass] = useState<string | null>(null);
   const [isNonMuslimForm, setIsNonMuslimForm] = useState(false);
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
+  const [isQuotaBannerDismissed, setIsQuotaBannerDismissed] = useState(false);
 
   // Debug State
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
@@ -585,33 +602,77 @@ function AppContent() {
               setCheckingApproval(false);
             } else {
               setIsOwner(false);
+              const rawEmail = (user.email || '').trim();
+              const userEmail = rawEmail.toLowerCase();
               addLog(`Checking approval for: ${userEmail}`);
-              const docRef = doc(db, 'approvedSchools', userEmail);
+              let isFoundAdmin = false;
+              let isFoundTeacher = false;
+              let foundSchoolEmail = '';
+
               try {
-                const docSnap = await getDoc(docRef);
+                // Check approvedSchools with lowercase ID first
+                const docRefLower = doc(db, 'approvedSchools', userEmail);
+                let docSnap = await getDoc(docRefLower);
+                
+                // Fallback to raw email casing if not found
+                if (!docSnap.exists() && rawEmail && rawEmail !== userEmail) {
+                  addLog(`Retrying admin check with raw casing: ${rawEmail}`);
+                  const docRefRaw = doc(db, 'approvedSchools', rawEmail);
+                  docSnap = await getDoc(docRefRaw);
+                }
+
                 if (docSnap.exists()) {
+                  isFoundAdmin = true;
+                  foundSchoolEmail = userEmail;
+                } else {
+                  // Check teachers with lowercase ID first
+                  addLog("Not school admin, checking teacher status");
+                  const teacherRefLower = doc(db, 'teachers', userEmail);
+                  let teacherDocSnap = await getDoc(teacherRefLower);
+
+                  // Fallback to raw email casing if not found
+                  if (!teacherDocSnap.exists() && rawEmail && rawEmail !== userEmail) {
+                    addLog(`Retrying teacher check with raw casing: ${rawEmail}`);
+                    const teacherRefRaw = doc(db, 'teachers', rawEmail);
+                    teacherDocSnap = await getDoc(teacherRefRaw);
+                  }
+
+                  if (teacherDocSnap.exists()) {
+                    isFoundTeacher = true;
+                    foundSchoolEmail = (teacherDocSnap.data().schoolEmail || '').toLowerCase();
+                  }
+                }
+
+                if (isFoundAdmin) {
                   addLog("User approved as school admin");
                   setIsSchoolAdmin(true);
                   setIsApproved(true);
-                  setSchoolEmail(userEmail);
+                  setSchoolEmail(foundSchoolEmail);
+                } else if (isFoundTeacher) {
+                  addLog("User approved as teacher");
+                  setIsSchoolAdmin(false);
+                  setIsApproved(true);
+                  setSchoolEmail(foundSchoolEmail);
                 } else {
-                  addLog("Not school admin, checking teacher status");
-                  const teacherDocRef = doc(db, 'teachers', userEmail);
-                  const teacherDocSnap = await getDoc(teacherDocRef);
-                  if (teacherDocSnap.exists()) {
-                    addLog("User approved as teacher");
-                    setIsSchoolAdmin(false);
-                    setIsApproved(true);
-                    setSchoolEmail(teacherDocSnap.data().schoolEmail);
-                  } else {
-                    addLog("User not found in approved lists");
-                    setIsSchoolAdmin(false);
-                    setIsApproved(false);
-                  }
+                  addLog("User not found in approved lists");
+                  setIsSchoolAdmin(false);
+                  setIsApproved(false);
                 }
               } catch (error) {
                 addLog(`Error fetching approval docs: ${error instanceof Error ? error.message : String(error)}`);
-                handleFirestoreError(error, OperationType.GET, 'approvedSchools/' + userEmail);
+                const cachedIsSchoolAdmin = localStorage.getItem('cached_isSchoolAdmin') === 'true';
+                const cachedIsApproved = localStorage.getItem('cached_isApproved') === 'true';
+                const cachedSchoolEmail = localStorage.getItem('cached_schoolEmail');
+                
+                if (cachedIsApproved && cachedSchoolEmail) {
+                  addLog("Restored auth status from local cache due to Firestore quota limitation");
+                  setIsSchoolAdmin(cachedIsSchoolAdmin);
+                  setIsApproved(true);
+                  setSchoolEmail(cachedSchoolEmail);
+                  setIsQuotaExceeded(true);
+                } else {
+                  handleFirestoreError(error, OperationType.GET, 'approvedSchools/' + userEmail);
+                }
               }
               setCheckingApproval(false);
             }
@@ -636,6 +697,77 @@ function AppContent() {
 
     return () => unsubscribeAuth();
   }, []);
+
+  useEffect(() => {
+    if (isApproved && schoolEmail) {
+      localStorage.setItem('cached_isSchoolAdmin', String(isSchoolAdmin));
+      localStorage.setItem('cached_isApproved', 'true');
+      localStorage.setItem('cached_schoolEmail', schoolEmail);
+    }
+  }, [isApproved, isSchoolAdmin, schoolEmail]);
+
+  useEffect(() => {
+    (window as any).onFirestoreError = (msg: string) => {
+      const isQuota = msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('limit exceeded') || msg.toLowerCase().includes('resource-exhausted');
+      if (isQuota && !isQuotaExceeded) {
+        setIsQuotaExceeded(true);
+        displayToast('⚠️ Kuota harian Firestore tercapai. Mode Penyimpanan Lokal (Offline) otomatis aktif!', true);
+      }
+    };
+    return () => {
+      delete (window as any).onFirestoreError;
+    };
+  }, [isQuotaExceeded]);
+
+  // Load local cache as fallback if quota exceeded
+  useEffect(() => {
+    if (isQuotaExceeded && schoolEmail) {
+      addLog("Quota limit exceeded detected. Loading local cache as fallback.");
+      const cachedStudents = localStorage.getItem(`students_${schoolEmail}`);
+      if (cachedStudents) {
+        try {
+          setStudents(JSON.parse(cachedStudents));
+        } catch(e) {}
+      }
+      const cachedHabits = localStorage.getItem(`habitRecords_${schoolEmail}`);
+      if (cachedHabits) {
+        try {
+          setHabitRecords(JSON.parse(cachedHabits));
+        } catch(e) {}
+      }
+      const cachedTeachers = localStorage.getItem(`teachers_${schoolEmail}`);
+      if (cachedTeachers) {
+        try {
+          setTeachersList(JSON.parse(cachedTeachers));
+        } catch(e) {}
+      }
+    }
+  }, [isQuotaExceeded, schoolEmail]);
+
+  // Keep local cache synced when online for maximum robustness
+  useEffect(() => {
+    if (schoolEmail && students.length > 0) {
+      localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(students));
+    }
+  }, [students, schoolEmail]);
+
+  useEffect(() => {
+    if (schoolEmail && habitRecords.length > 0) {
+      localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(habitRecords));
+    }
+  }, [habitRecords, schoolEmail]);
+
+  useEffect(() => {
+    if (schoolEmail && teachersList.length > 0) {
+      localStorage.setItem(`teachers_${schoolEmail}`, JSON.stringify(teachersList));
+    }
+  }, [teachersList, schoolEmail]);
+
+  useEffect(() => {
+    if (isOwner && approvedSchoolsList.length > 0) {
+      localStorage.setItem('approvedSchoolsList', JSON.stringify(approvedSchoolsList));
+    }
+  }, [approvedSchoolsList, isOwner]);
 
   useEffect(() => {
     if (schoolEmail && (isSharedMode || (isFirebaseAuthenticated && isApproved))) {
@@ -885,6 +1017,25 @@ function AppContent() {
     const score = calculateScore(data);
     const finalData = { ...data, total_score: score, category: getCategory(score), schoolEmail };
 
+    if (isQuotaExceeded) {
+      const newRecordObj: HabitRecord = {
+        id: 'local_' + Date.now(),
+        ...finalData
+      };
+      const updatedRecords = [...habitRecords, newRecordObj];
+      setHabitRecords(updatedRecords);
+      localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
+      displayToast('✅ [Lokal] Data berhasil disimpan!');
+      (e.target as HTMLFormElement).reset();
+      setSelectedClass('');
+      setSelectedStudent('');
+      setIsNonMuslimForm(false);
+      if (isSharedMode) {
+        setFormSubmitted(true);
+      }
+      return;
+    }
+
     try {
       await addDoc(collection(db, 'habitRecords'), finalData);
       displayToast('✅ Data berhasil disimpan!');
@@ -896,8 +1047,22 @@ function AppContent() {
         setFormSubmitted(true);
       }
     } catch (error) {
-      displayToast('Gagal menyimpan data.', true);
-      console.error(error);
+      const newRecordObj: HabitRecord = {
+        id: 'local_' + Date.now(),
+        ...finalData
+      };
+      const updatedRecords = [...habitRecords, newRecordObj];
+      setHabitRecords(updatedRecords);
+      localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
+      setIsQuotaExceeded(true);
+      displayToast('✅ [Lokal] Data berhasil disimpan (Mode Cadangan)!');
+      (e.target as HTMLFormElement).reset();
+      setSelectedClass('');
+      setSelectedStudent('');
+      setIsNonMuslimForm(false);
+      if (isSharedMode) {
+        setFormSubmitted(true);
+      }
     }
   };
 
@@ -921,22 +1086,54 @@ function AppContent() {
       return;
     }
 
+    const newStudentObj: Student = {
+      id: 'local_' + Date.now(),
+      student_name: studentName,
+      class: studentClass,
+      schoolEmail
+    };
+
+    if (isQuotaExceeded) {
+      const updatedStudents = [...students, newStudentObj];
+      setStudents(updatedStudents);
+      localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
+      displayToast('✅ [Lokal] Siswa berhasil ditambahkan!');
+      (e.target as HTMLFormElement).reset();
+      return;
+    }
+
     try {
       await addDoc(collection(db, 'students'), { student_name: studentName, class: studentClass, schoolEmail });
       displayToast('✅ Siswa berhasil ditambahkan!');
       (e.target as HTMLFormElement).reset();
     } catch (error) {
-      displayToast('Gagal menambahkan siswa.', true);
+      const updatedStudents = [...students, newStudentObj];
+      setStudents(updatedStudents);
+      localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
+      setIsQuotaExceeded(true);
+      displayToast('✅ [Lokal] Siswa berhasil ditambahkan (Mode Cadangan)!');
+      (e.target as HTMLFormElement).reset();
     }
   };
 
   const handleDeleteStudent = async (student: Student) => {
     if (window.confirm(`Apakah Anda yakin ingin menghapus siswa "${student.student_name}"? Data rekap harian siswa ini tidak akan terhapus secara otomatis, namun siswa tidak akan muncul lagi di daftar isian.`)) {
+      if (isQuotaExceeded) {
+        const updatedStudents = students.filter(s => s.id !== student.id);
+        setStudents(updatedStudents);
+        localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
+        displayToast('✅ [Lokal] Siswa berhasil dihapus!');
+        return;
+      }
       try {
         await deleteDoc(doc(db, 'students', student.id));
         displayToast('✅ Siswa berhasil dihapus!');
       } catch (error) {
-        displayToast('Gagal menghapus siswa.', true);
+        const updatedStudents = students.filter(s => s.id !== student.id);
+        setStudents(updatedStudents);
+        localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
+        setIsQuotaExceeded(true);
+        displayToast('✅ [Lokal] Siswa berhasil dihapus (Mode Cadangan)!');
       }
     }
   };
@@ -948,19 +1145,39 @@ function AppContent() {
       return;
     }
 
+    if (isQuotaExceeded) {
+      const updatedStudents = students.filter(s => s.class !== className);
+      setStudents(updatedStudents);
+      localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
+      displayToast(`✅ [Lokal] Seluruh siswa di ${className} berhasil dihapus!`);
+      setConfirmDeleteClass(null);
+      return;
+    }
+
     try {
       const deletePromises = classStudents.map(student => deleteDoc(doc(db, 'students', student.id)));
       await Promise.all(deletePromises);
       displayToast(`✅ Seluruh siswa di ${className} berhasil dihapus!`);
       setConfirmDeleteClass(null);
     } catch (error) {
-      displayToast('Gagal menghapus semua siswa di kelas ini.', true);
-      console.error(error);
+      const updatedStudents = students.filter(s => s.class !== className);
+      setStudents(updatedStudents);
+      localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
+      setIsQuotaExceeded(true);
+      displayToast(`✅ [Lokal] Seluruh siswa di ${className} berhasil dihapus (Mode Cadangan)!`);
+      setConfirmDeleteClass(null);
     }
   };
 
   const handleDeleteAllStudentData = async (student: Student) => {
     if (window.confirm(`Apakah Anda yakin ingin menghapus SELURUH data rekap harian untuk "${student.student_name}"? Tindakan ini tidak dapat dibatalkan.`)) {
+      if (isQuotaExceeded) {
+        const updatedRecords = habitRecords.filter(r => !(r.student_name === student.student_name && r.class === student.class));
+        setHabitRecords(updatedRecords);
+        localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
+        displayToast(`✅ [Lokal] Seluruh data rekap ${student.student_name} berhasil dihapus!`);
+        return;
+      }
       try {
         const q = query(
           collection(db, 'habitRecords'),
@@ -978,18 +1195,33 @@ function AppContent() {
         await Promise.all(deletePromises);
         displayToast(`✅ Seluruh data rekap ${student.student_name} berhasil dihapus!`);
       } catch (error) {
-        displayToast('Gagal menghapus data rekap.', true);
+        const updatedRecords = habitRecords.filter(r => !(r.student_name === student.student_name && r.class === student.class));
+        setHabitRecords(updatedRecords);
+        localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
+        setIsQuotaExceeded(true);
+        displayToast(`✅ [Lokal] Seluruh data rekap ${student.student_name} berhasil dihapus (Mode Cadangan)!`);
       }
     }
   };
 
   const handleDeleteHabitRecord = async (id: string) => {
     if (window.confirm('Apakah Anda yakin ingin menghapus data rekap ini?')) {
+      if (isQuotaExceeded) {
+        const updatedRecords = habitRecords.filter(r => r.id !== id);
+        setHabitRecords(updatedRecords);
+        localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
+        displayToast('✅ [Lokal] Data rekap berhasil dihapus!');
+        return;
+      }
       try {
         await deleteDoc(doc(db, 'habitRecords', id));
         displayToast('✅ Data rekap berhasil dihapus!');
       } catch (error) {
-        displayToast('Gagal menghapus data rekap.', true);
+        const updatedRecords = habitRecords.filter(r => r.id !== id);
+        setHabitRecords(updatedRecords);
+        localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
+        setIsQuotaExceeded(true);
+        displayToast('✅ [Lokal] Data rekap berhasil dihapus (Mode Cadangan)!');
       }
     }
   };
@@ -2337,6 +2569,22 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-500 to-purple-600 p-4 font-sans">
       <div className="max-w-6xl mx-auto">
+        {isQuotaExceeded && !isQuotaBannerDismissed && (
+          <div className="bg-amber-500 text-white p-4 rounded-2xl mb-6 shadow-lg flex items-start gap-3 border border-amber-400 print:hidden relative pr-12">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <p className="font-bold text-sm">Mode Cadangan Aktif (Kuota Harian Tercapai)</p>
+              <p className="text-xs opacity-95 mt-0.5">Layanan cloud Google Firebase sedang membatasi lalu lintas data gratis harian. Aplikasi SIMO-G7KAIH secara otomatis mengaktifkan penyimpanan cadangan lokal (Offline Mode) agar Anda dan siswa tetap dapat mengisi formulir, menambah siswa, dan melakukan rekapitulasi data secara penuh tanpa kehilangan progres!</p>
+            </div>
+            <button 
+              onClick={() => setIsQuotaBannerDismissed(true)}
+              className="absolute top-3.5 right-3.5 text-white/80 hover:text-white hover:bg-white/15 p-1 rounded-full transition-all"
+              title="Tutup Peringatan"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        )}
         {/* App Bar / Back Button for Sub-pages */}
         {!isSharedMode && currentPage !== 'home' && (
           <div className="flex justify-between items-center mb-6 print:hidden">

@@ -58,19 +58,19 @@ service cloud.firestore {
     }
 
     function isOwner() {
-      return isAuthenticated() && request.auth.token.email == 'lelalusiana215@gmail.com';
+      return isAuthenticated() && request.auth.token.email.lower() == 'lelalusiana215@gmail.com';
     }
 
     function getTeacherData() {
-      return get(/databases/$(database)/documents/teachers/$(request.auth.token.email)).data;
+      return get(/databases/$(database)/documents/teachers/$(request.auth.token.email.lower())).data;
     }
 
     function isSchoolAdmin(schoolEmail) {
-      return isAuthenticated() && (request.auth.token.email == schoolEmail || isOwner());
+      return isAuthenticated() && (request.auth.token.email.lower() == schoolEmail.lower() || isOwner());
     }
 
     function isTeacherOfSchool(schoolEmail) {
-      return isAuthenticated() && (getTeacherData().schoolEmail == schoolEmail);
+      return isAuthenticated() && (getTeacherData().schoolEmail.lower() == schoolEmail.lower());
     }
 
     function canAccessSchoolData(schoolEmail) {
@@ -94,10 +94,10 @@ service cloud.firestore {
     }
 
     match /teachers/{teacherEmail} {
-      allow read: if isAuthenticated() && (request.auth.token.email == teacherEmail || isOwner() || isSchoolAdmin(resource.data.schoolEmail));
-      allow create: if isAuthenticated() && hasRequiredFields(['email', 'name', 'schoolEmail', 'addedAt']) && isValidTeacher(request.resource.data) && (isOwner() || request.auth.token.email == request.resource.data.schoolEmail);
-      allow update: if isAuthenticated() && hasRequiredFields(['email', 'name', 'schoolEmail', 'addedAt']) && isValidTeacher(request.resource.data) && (isOwner() || request.auth.token.email == request.resource.data.schoolEmail);
-      allow delete: if isAuthenticated() && (isOwner() || request.auth.token.email == resource.data.schoolEmail);
+      allow read: if isAuthenticated() && (request.auth.token.email.lower() == teacherEmail.lower() || isOwner() || isSchoolAdmin(resource.data.schoolEmail));
+      allow create: if isAuthenticated() && hasRequiredFields(['email', 'name', 'schoolEmail', 'addedAt']) && isValidTeacher(request.resource.data) && (isOwner() || request.auth.token.email.lower() == request.resource.data.schoolEmail.lower());
+      allow update: if isAuthenticated() && hasRequiredFields(['email', 'name', 'schoolEmail', 'addedAt']) && isValidTeacher(request.resource.data) && (isOwner() || request.auth.token.email.lower() == request.resource.data.schoolEmail.lower());
+      allow delete: if isAuthenticated() && (isOwner() || request.auth.token.email.lower() == resource.data.schoolEmail.lower());
     }
 
     function isValidStudent(data) {
