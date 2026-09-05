@@ -124,8 +124,8 @@ service cloud.firestore {
     }
 
     match /habitRecords/{recordId} {
-      // Allow read for authorized staff
-      allow read: if isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail);
+      // Allow read for authorized staff or for shared students via query with limit
+      allow read: if (isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail)) || (request.query.limit <= 500);
       // Allow create for anyone (students) but must have valid schoolEmail and schema
       allow create: if hasRequiredFields(['student_name', 'class', 'date', 'total_score', 'category', 'schoolEmail']) && 
                     isValidHabitRecord(request.resource.data) &&

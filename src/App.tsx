@@ -1,6 +1,6 @@
 import * as React from 'react';
 const { useState, useEffect, useRef } = React;
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDoc, setDoc, getDocs, getDocFromServer } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDoc, setDoc, getDocs, getDocFromServer, limit } from 'firebase/firestore';
 import { db, auth, signInWithGoogle, signInWithGithub } from './firebase';
 import { Student, HabitRecord } from './types';
 import * as XLSX from 'xlsx';
@@ -640,7 +640,7 @@ function AppContent() {
   useEffect(() => {
     if (schoolEmail && (isSharedMode || (isFirebaseAuthenticated && isApproved))) {
       const studentsRef = collection(db, 'students');
-      const qStudents = query(studentsRef, where('schoolEmail', '==', schoolEmail));
+      const qStudents = query(studentsRef, where('schoolEmail', '==', schoolEmail), limit(500));
       const unsubscribeStudents = onSnapshot(qStudents, (snapshot) => {
         const studentsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
         setStudents(studentsData);
@@ -649,7 +649,7 @@ function AppContent() {
       });
 
       const habitsRef = collection(db, 'habitRecords');
-      const qHabits = query(habitsRef, where('schoolEmail', '==', schoolEmail));
+      const qHabits = query(habitsRef, where('schoolEmail', '==', schoolEmail), limit(500));
       const unsubscribeHabits = onSnapshot(qHabits, (snapshot) => {
         const habitsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as HabitRecord));
         setHabitRecords(habitsData);
