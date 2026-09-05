@@ -1504,6 +1504,69 @@ function AppContent() {
     );
   };
 
+  const getWorshipSummary = (r: any) => {
+    if (r.is_non_muslim) {
+      const items = [];
+      if (r.non_muslim_pagi) items.push('Pagi');
+      if (r.non_muslim_malam) items.push('Malam');
+      if (r.non_muslim_kitab) items.push('Kitab');
+      if (r.non_muslim_mingguan) items.push('Mingguan');
+      if (r.non_muslim_keluarga) items.push('Kelg');
+      if (r.non_muslim_lainnya) items.push('Lainnya');
+      return items.length > 0 ? `Non-Islam (${items.length}): ${items.join(', ')}` : 'Tidak mengisi';
+    } else {
+      const items = [];
+      if (r.prayer_subuh) items.push('Subuh');
+      if (r.prayer_dhuhur) items.push('Dhuhur');
+      if (r.prayer_ashar) items.push('Ashar');
+      if (r.prayer_maghrib) items.push('Maghrib');
+      if (r.prayer_isya) items.push('Isya');
+      if (r.dta) items.push('DTA');
+      return items.length > 0 ? `Islam (${items.length}): ${items.join(', ')}` : 'Tidak mengisi';
+    }
+  };
+
+  const getAverageTime = (records: any[], field: string) => {
+    const times = records.map(r => r[field]).filter(Boolean);
+    if (times.length === 0) return '-';
+    const totalMinutes = times.reduce((sum, t) => {
+      const parts = t.split(':');
+      if (parts.length < 2) return sum;
+      return sum + (parseInt(parts[0]) * 60 + parseInt(parts[1]));
+    }, 0);
+    const avgMinutes = Math.round(totalMinutes / times.length);
+    const hh = String(Math.floor(avgMinutes / 60)).padStart(2, '0');
+    const mm = String(avgMinutes % 60).padStart(2, '0');
+    return `${hh}:${mm}`;
+  };
+
+  const getAverageWorshipPercentage = (records: any[]) => {
+    if (records.length === 0) return 0;
+    let totalChecked = 0;
+    records.forEach(r => {
+      if (r.is_non_muslim) {
+        totalChecked += [
+          r.non_muslim_pagi,
+          r.non_muslim_malam,
+          r.non_muslim_kitab,
+          r.non_muslim_mingguan,
+          r.non_muslim_keluarga,
+          r.non_muslim_lainnya
+        ].filter(Boolean).length;
+      } else {
+        totalChecked += [
+          r.prayer_subuh,
+          r.prayer_dhuhur,
+          r.prayer_ashar,
+          r.prayer_maghrib,
+          r.prayer_isya,
+          r.dta
+        ].filter(Boolean).length;
+      }
+    });
+    return Math.round((totalChecked / (records.length * 6)) * 100);
+  };
+
   const renderDailyReportPage = () => {
     const filteredRecords = habitRecords.filter(record => {
       if (selectedReportClass && !isClassMatch(record.class, selectedReportClass)) return false;
@@ -1529,25 +1592,57 @@ function AppContent() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
+          <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="bg-blue-500 text-white">
                 <th className="p-3 border">Nama</th>
                 <th className="p-3 border">Kelas</th>
-                <th className="p-3 border">Tanggal</th>
-                <th className="p-3 border">Skor %</th>
-                <th className="p-3 border">Kategori</th>
-                <th className="p-3 border">Aksi</th>
+                <th className="p-3 border text-center">Tanggal</th>
+                <th className="p-2 border text-center">⏰ Bangun</th>
+                <th className="p-2 border">🙏 Beribadah</th>
+                <th className="p-2 border">⚽ Olahraga</th>
+                <th className="p-2 border">🥗 Makan</th>
+                <th className="p-2 border text-center">📚 Belajar</th>
+                <th className="p-2 border">🤝 Bersosialisasi</th>
+                <th className="p-2 border text-center">🌙 Tidur</th>
+                <th className="p-3 border text-center">Skor %</th>
+                <th className="p-3 border text-center">Kategori</th>
+                <th className="p-3 border text-center">Aksi</th>
               </tr>
             </thead>
             <tbody>
               {filteredRecords.map(record => (
                 <tr key={record.id} className="hover:bg-gray-50">
-                  <td className="p-3 border">{record.student_name}</td>
+                  <td className="p-3 border font-semibold">{record.student_name}</td>
                   <td className="p-3 border text-center">{record.class}</td>
-                  <td className="p-3 border text-center">{record.date}</td>
-                  <td className="p-3 border text-center font-bold">{record.total_score}%</td>
-                  <td className="p-3 border text-center">{record.category}</td>
+                  <td className="p-3 border text-center whitespace-nowrap">{record.date}</td>
+                  <td className="p-2 border text-center text-xs font-bold text-yellow-700 bg-yellow-50">{record.wake_time || '-'}</td>
+                  <td className="p-2 border text-xs bg-green-50">
+                    <span className="font-semibold block">{record.is_non_muslim ? '⛪ Selain Islam' : '🕌 Islam'}</span>
+                    <span className="text-gray-600 block text-[10px] leading-tight">{getWorshipSummary(record).split(': ')[1] || '-'}</span>
+                  </td>
+                  <td className="p-2 border text-xs bg-blue-50">
+                    <span className="font-semibold block">{record.exercise ? '⚽ Ya' : '❌ Tidak'}</span>
+                    {record.exercise && <span className="text-gray-600 block text-[10px] leading-tight truncate max-w-[120px]">{record.exercise_type || '-'}</span>}
+                  </td>
+                  <td className="p-2 border text-xs bg-orange-50">
+                    <span className="font-semibold block">{record.healthy_food ? '🥗 Ya' : '❌ Tidak'}</span>
+                    {record.healthy_food && <span className="text-gray-600 block text-[10px] leading-tight truncate max-w-[120px]">{record.food_menu || '-'}</span>}
+                  </td>
+                  <td className="p-2 border text-center text-xs font-semibold text-purple-700 bg-purple-50">{record.study_duration ? `${record.study_duration} mnt` : '0 mnt'}</td>
+                  <td className="p-2 border text-xs bg-pink-50 max-w-[150px] truncate" title={record.social_activity || '-'}>{record.social_activity || '-'}</td>
+                  <td className="p-2 border text-center text-xs font-bold text-indigo-700 bg-indigo-50">{record.sleep_time || '-'}</td>
+                  <td className="p-3 border text-center font-bold text-blue-600">{record.total_score}%</td>
+                  <td className="p-3 border text-center">
+                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                      record.category === 'Sangat Baik' ? 'bg-green-100 text-green-800' :
+                      record.category === 'Baik' ? 'bg-blue-100 text-blue-800' :
+                      record.category === 'Mulai Berkembang' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {record.category}
+                    </span>
+                  </td>
                   <td className="p-3 border text-center">
                     <button onClick={() => handleDeleteHabitRecord(record.id)} className="bg-red-100 hover:bg-red-200 text-red-600 p-2 rounded-lg transition-colors" title="Hapus Data">
                       🗑️
@@ -1557,7 +1652,7 @@ function AppContent() {
               ))}
               {filteredRecords.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-6 text-center text-gray-500">Tidak ada data.</td>
+                  <td colSpan={13} className="p-6 text-center text-gray-500">Tidak ada data.</td>
                 </tr>
               )}
             </tbody>
@@ -1587,7 +1682,8 @@ function AppContent() {
         ...student,
         averageScore,
         category: getCategory(averageScore),
-        daysFilled: studentRecords.length
+        daysFilled: studentRecords.length,
+        records: studentRecords
       };
     }).filter(Boolean);
 
@@ -1666,28 +1762,66 @@ function AppContent() {
         )}
 
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
+          <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="bg-yellow-500 text-white">
                 <th className="p-3 border">Nama</th>
                 <th className="p-3 border">Kelas</th>
-                <th className="p-3 border">Hari Mengisi</th>
-                <th className="p-3 border">Rata-rata Skor %</th>
-                <th className="p-3 border">Kategori</th>
+                <th className="p-3 border text-center">Hari Mengisi</th>
+                <th className="p-2 border text-center">⏰ Rata Bangun</th>
+                <th className="p-2 border text-center">🙏 Skor Ibadah</th>
+                <th className="p-2 border text-center">⚽ Rutin Olahraga</th>
+                <th className="p-2 border text-center">🥗 Makan Sehat</th>
+                <th className="p-2 border text-center">📚 Rata Belajar</th>
+                <th className="p-2 border text-center">🤝 Aktif Sosial</th>
+                <th className="p-2 border text-center">🌙 Rata Tidur</th>
+                <th className="p-3 border text-center">Rata Skor %</th>
+                <th className="p-3 border text-center">Kategori</th>
               </tr>
             </thead>
             <tbody>
               {studentAverages.length > 0 ? studentAverages.map((student: any) => (
                 <tr key={student.id} className="hover:bg-gray-50">
-                  <td className="p-3 border">{student.student_name}</td>
+                  <td className="p-3 border font-semibold">{student.student_name}</td>
                   <td className="p-3 border text-center">{student.class}</td>
                   <td className="p-3 border text-center">{student.daysFilled} hari</td>
-                  <td className="p-3 border text-center font-bold">{student.averageScore}%</td>
-                  <td className="p-3 border text-center">{student.category}</td>
+                  {(() => {
+                    const recs = student.records || [];
+                    const avgWake = getAverageTime(recs, 'wake_time');
+                    const avgWorship = getAverageWorshipPercentage(recs);
+                    const exercisePct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.exercise).length / recs.length) * 100) : 0;
+                    const foodPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.healthy_food).length / recs.length) * 100) : 0;
+                    const avgStudy = recs.length > 0 ? Math.round(recs.reduce((sum: number, r: any) => sum + (parseInt(r.study_duration) || 0), 0) / recs.length) : 0;
+                    const socialPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.social_activity && r.social_activity !== '-').length / recs.length) * 100) : 0;
+                    const avgSleep = getAverageTime(recs, 'sleep_time');
+
+                    return (
+                      <>
+                        <td className="p-2 border text-center text-xs font-bold text-yellow-700 bg-yellow-50">{avgWake}</td>
+                        <td className="p-2 border text-center text-xs font-bold text-green-700 bg-green-50">{avgWorship}%</td>
+                        <td className="p-2 border text-center text-xs font-bold text-blue-700 bg-blue-50">{exercisePct}%</td>
+                        <td className="p-2 border text-center text-xs font-bold text-orange-700 bg-orange-50">{foodPct}%</td>
+                        <td className="p-2 border text-center text-xs font-bold text-purple-700 bg-purple-50">{avgStudy} mnt</td>
+                        <td className="p-2 border text-center text-xs font-bold text-pink-700 bg-pink-50">{socialPct}%</td>
+                        <td className="p-2 border text-center text-xs font-bold text-indigo-700 bg-indigo-50">{avgSleep}</td>
+                      </>
+                    );
+                  })()}
+                  <td className="p-3 border text-center font-bold text-yellow-600 bg-yellow-50/50">{student.averageScore}%</td>
+                  <td className="p-3 border text-center">
+                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                      student.category === 'Sangat Baik' ? 'bg-green-100 text-green-800' :
+                      student.category === 'Baik' ? 'bg-blue-100 text-blue-800' :
+                      student.category === 'Mulai Berkembang' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {student.category}
+                    </span>
+                  </td>
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={5} className="p-6 text-center text-gray-500">Tidak ada data untuk bulan ini.</td>
+                  <td colSpan={12} className="p-6 text-center text-gray-500">Tidak ada data untuk bulan ini.</td>
                 </tr>
               )}
             </tbody>
@@ -1719,7 +1853,8 @@ function AppContent() {
         ...student,
         averageScore,
         category: getCategory(averageScore),
-        daysFilled: studentRecords.length
+        daysFilled: studentRecords.length,
+        records: studentRecords
       };
     }).filter(Boolean);
 
@@ -1886,28 +2021,66 @@ function AppContent() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
+          <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="bg-purple-500 text-white">
                 <th className="p-3 border">Nama</th>
                 <th className="p-3 border">Kelas</th>
-                <th className="p-3 border">Hari Mengisi</th>
-                <th className="p-3 border">Rata-rata Skor %</th>
-                <th className="p-3 border">Kategori</th>
+                <th className="p-3 border text-center">Hari Mengisi</th>
+                <th className="p-2 border text-center">⏰ Rata Bangun</th>
+                <th className="p-2 border text-center">🙏 Skor Ibadah</th>
+                <th className="p-2 border text-center">⚽ Rutin Olahraga</th>
+                <th className="p-2 border text-center">🥗 Makan Sehat</th>
+                <th className="p-2 border text-center">📚 Rata Belajar</th>
+                <th className="p-2 border text-center">🤝 Aktif Sosial</th>
+                <th className="p-2 border text-center">🌙 Rata Tidur</th>
+                <th className="p-3 border text-center">Rata Skor %</th>
+                <th className="p-3 border text-center">Kategori</th>
               </tr>
             </thead>
             <tbody>
               {studentAverages.length > 0 ? studentAverages.map((student: any) => (
                 <tr key={student.id} className="hover:bg-gray-50">
-                  <td className="p-3 border">{student.student_name}</td>
+                  <td className="p-3 border font-semibold">{student.student_name}</td>
                   <td className="p-3 border text-center">{student.class}</td>
                   <td className="p-3 border text-center">{student.daysFilled} hari</td>
-                  <td className="p-3 border text-center font-bold">{student.averageScore}%</td>
-                  <td className="p-3 border text-center">{student.category}</td>
+                  {(() => {
+                    const recs = student.records || [];
+                    const avgWake = getAverageTime(recs, 'wake_time');
+                    const avgWorship = getAverageWorshipPercentage(recs);
+                    const exercisePct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.exercise).length / recs.length) * 100) : 0;
+                    const foodPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.healthy_food).length / recs.length) * 100) : 0;
+                    const avgStudy = recs.length > 0 ? Math.round(recs.reduce((sum: number, r: any) => sum + (parseInt(r.study_duration) || 0), 0) / recs.length) : 0;
+                    const socialPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.social_activity && r.social_activity !== '-').length / recs.length) * 100) : 0;
+                    const avgSleep = getAverageTime(recs, 'sleep_time');
+
+                    return (
+                      <>
+                        <td className="p-2 border text-center text-xs font-bold text-yellow-700 bg-yellow-50">{avgWake}</td>
+                        <td className="p-2 border text-center text-xs font-bold text-green-700 bg-green-50">{avgWorship}%</td>
+                        <td className="p-2 border text-center text-xs font-bold text-blue-700 bg-blue-50">{exercisePct}%</td>
+                        <td className="p-2 border text-center text-xs font-bold text-orange-700 bg-orange-50">{foodPct}%</td>
+                        <td className="p-2 border text-center text-xs font-bold text-purple-700 bg-purple-50">{avgStudy} mnt</td>
+                        <td className="p-2 border text-center text-xs font-bold text-pink-700 bg-pink-50">{socialPct}%</td>
+                        <td className="p-2 border text-center text-xs font-bold text-indigo-700 bg-indigo-50">{avgSleep}</td>
+                      </>
+                    );
+                  })()}
+                  <td className="p-3 border text-center font-bold text-purple-600 bg-purple-50/50">{student.averageScore}%</td>
+                  <td className="p-3 border text-center">
+                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                      student.category === 'Sangat Baik' ? 'bg-green-100 text-green-800' :
+                      student.category === 'Baik' ? 'bg-blue-100 text-blue-800' :
+                      student.category === 'Mulai Berkembang' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {student.category}
+                    </span>
+                  </td>
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={5} className="p-6 text-center text-gray-500">Tidak ada data untuk semester ini.</td>
+                  <td colSpan={12} className="p-6 text-center text-gray-500">Tidak ada data untuk semester ini.</td>
                 </tr>
               )}
             </tbody>
@@ -1950,26 +2123,51 @@ function AppContent() {
                   </div>
                 </div>
 
-                <table className="w-full border-collapse border border-black text-sm">
+                 <table className="w-full border-collapse border border-black text-sm">
                   <thead>
                     <tr className="bg-gray-100">
                       <th className="border border-black p-2 text-center w-10">No</th>
                       <th className="border border-black p-2">Nama Siswa</th>
                       <th className="border border-black p-2 text-center">Kelas</th>
+                      <th className="border border-black p-2 text-center">⏰ Bangun</th>
+                      <th className="border border-black p-2 text-center">🙏 Ibadah</th>
+                      <th className="border border-black p-2 text-center">⚽ Olahraga</th>
+                      <th className="border border-black p-2 text-center">🥗 Makan</th>
+                      <th className="border border-black p-2 text-center">📚 Belajar</th>
+                      <th className="border border-black p-2 text-center">🤝 Sosial</th>
+                      <th className="border border-black p-2 text-center">🌙 Tidur</th>
                       <th className="border border-black p-2 text-center">Skor (%)</th>
-                      <th className="border border-black p-2">Kategori</th>
+                      <th className="border border-black p-2 text-center">Kategori</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {studentAverages.map((student: any, index: number) => (
-                      <tr key={student.id}>
-                        <td className="border border-black p-2 text-center">{index + 1}</td>
-                        <td className="border border-black p-2">{student.student_name}</td>
-                        <td className="border border-black p-2 text-center">{student.class}</td>
-                        <td className="border border-black p-2 text-center font-bold">{student.averageScore}%</td>
-                        <td className="border border-black p-2">{student.category}</td>
-                      </tr>
-                    ))}
+                    {studentAverages.map((student: any, index: number) => {
+                      const recs = student.records || [];
+                      const avgWake = getAverageTime(recs, 'wake_time');
+                      const avgWorship = getAverageWorshipPercentage(recs);
+                      const exercisePct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.exercise).length / recs.length) * 100) : 0;
+                      const foodPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.healthy_food).length / recs.length) * 100) : 0;
+                      const avgStudy = recs.length > 0 ? Math.round(recs.reduce((sum: number, r: any) => sum + (parseInt(r.study_duration) || 0), 0) / recs.length) : 0;
+                      const socialPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.social_activity && r.social_activity !== '-').length / recs.length) * 100) : 0;
+                      const avgSleep = getAverageTime(recs, 'sleep_time');
+
+                      return (
+                        <tr key={student.id}>
+                          <td className="border border-black p-2 text-center">{index + 1}</td>
+                          <td className="border border-black p-2 font-bold">{student.student_name}</td>
+                          <td className="border border-black p-2 text-center">{student.class}</td>
+                          <td className="border border-black p-2 text-center">{avgWake}</td>
+                          <td className="border border-black p-2 text-center">{avgWorship}%</td>
+                          <td className="border border-black p-2 text-center">{exercisePct}%</td>
+                          <td className="border border-black p-2 text-center">{foodPct}%</td>
+                          <td className="border border-black p-2 text-center">{avgStudy} mnt</td>
+                          <td className="border border-black p-2 text-center">{socialPct}%</td>
+                          <td className="border border-black p-2 text-center">{avgSleep}</td>
+                          <td className="border border-black p-2 text-center font-bold">{student.averageScore}%</td>
+                          <td className="border border-black p-2 text-center">{student.category}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
 
