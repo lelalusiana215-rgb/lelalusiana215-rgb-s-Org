@@ -1291,7 +1291,7 @@ function AppContent() {
           </div>
 
           <div className="card-habit bg-green-100 p-6 rounded-2xl shadow-md">
-            <input type="hidden" name="worship-type" value={isNonMuslimForm ? 'non-islam' : 'islam'} />
+            <input type="hidden" name="worship-type" value={isNonMuslimForm ? 'non-islam' : 'islam'} readOnly />
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
               <div className="flex items-center">
                 <span className="text-4xl mr-3">{isNonMuslimForm ? '⛪' : '🕌'}</span>
