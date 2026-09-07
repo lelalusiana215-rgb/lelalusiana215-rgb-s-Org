@@ -117,15 +117,15 @@ service cloud.firestore {
 
     match /students/{studentId} {
       // Allow read for students to fill form (via schoolEmail query) or for authorized staff
-      allow read: if (isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail)) || (request.query.limit <= 500); 
+      allow read: if (isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail)) || (request.query.limit <= 3000); 
       allow create: if isAuthenticated() && canAccessSchoolData(request.resource.data.schoolEmail) && isValidStudent(request.resource.data);
       allow update: if isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail) && isValidStudent(request.resource.data);
       allow delete: if isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail);
     }
 
     match /habitRecords/{recordId} {
-      // Allow read for authorized staff
-      allow read: if isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail);
+      // Allow read for authorized staff or for shared students via query with limit
+      allow read: if (isAuthenticated() && canAccessSchoolData(resource.data.schoolEmail)) || (request.query.limit <= 3000);
       // Allow create for anyone (students) but must have valid schoolEmail and schema
       allow create: if hasRequiredFields(['student_name', 'class', 'date', 'total_score', 'category', 'schoolEmail']) && 
                     isValidHabitRecord(request.resource.data) &&

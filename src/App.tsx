@@ -1,6 +1,6 @@
 import * as React from 'react';
 const { useState, useEffect, useRef } = React;
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDoc, setDoc, getDocs, getDocFromServer } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDoc, setDoc, getDocs, getDocFromServer, limit, writeBatch } from 'firebase/firestore';
 import { db, auth, signInWithGoogle, signInWithGithub } from './firebase';
 import { Student, HabitRecord } from './types';
 import * as XLSX from 'xlsx';
@@ -172,8 +172,6 @@ interface FirestoreErrorInfo {
   }
 }
 
-let globalFirestoreErrorHandler: ((errInfo: any) => void) | null = null;
-
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
@@ -193,41 +191,13 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     operationType,
     path
   }
-
-  const errMessage = errInfo.error || '';
-  const isQuota = errMessage.includes('Quota limit exceeded') || 
-                  errMessage.includes('Quota exceeded') || 
-                  errMessage.toLowerCase().includes('quota');
-
-  if (isQuota) {
-    console.warn('Firestore Quota Limit Reached (Handled): ', JSON.stringify(errInfo));
-    if (globalFirestoreErrorHandler) {
-      try {
-        globalFirestoreErrorHandler(errInfo);
-      } catch (e) {
-        console.error('Error in global error handler:', e);
-      }
-    }
-    // Gracefully catch and handle quota error without throwing uncaught exceptions to prevent crashing the applet
-    return;
-  }
-
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  if (globalFirestoreErrorHandler) {
-    try {
-      globalFirestoreErrorHandler(errInfo);
-    } catch (e) {
-      console.error('Error in global error handler:', e);
-    }
-  }
-
   throw new Error(JSON.stringify(errInfo));
 }
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('landing');
   const [isSharedMode, setIsSharedMode] = useState(false);
-  const [quotaError, setQuotaError] = useState<any>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false); // Teacher password auth
   const [isFirebaseAuthenticated, setIsFirebaseAuthenticated] = useState(false); // Firebase auth
   const [isDemo, setIsDemo] = useState(false);
@@ -280,6 +250,22 @@ function AppContent() {
   const [students, setStudents] = useState<Student[]>([]);
   const [habitRecords, setHabitRecords] = useState<HabitRecord[]>([]);
 
+  // On-demand Habit Records for large schools (>500 students)
+  const [formHabitRecords, setFormHabitRecords] = useState<HabitRecord[]>([]);
+  const [loadingFormRecords, setLoadingFormRecords] = useState(false);
+
+  const [dailyReportDate, setDailyReportDate] = useState(new Date().toISOString().split('T')[0]);
+  const [dailyHabitRecords, setDailyHabitRecords] = useState<HabitRecord[]>([]);
+  const [loadingDailyRecords, setLoadingDailyRecords] = useState(false);
+
+  const [monthlyHabitRecords, setMonthlyHabitRecords] = useState<HabitRecord[]>([]);
+  const [loadingMonthlyRecords, setLoadingMonthlyRecords] = useState(false);
+
+  const [semesterHabitRecords, setSemesterHabitRecords] = useState<HabitRecord[]>([]);
+  const [loadingSemesterRecords, setLoadingSemesterRecords] = useState(false);
+
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
+
   const [toastMessage, setToastMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [isErrorToast, setIsErrorToast] = useState(false);
@@ -307,7 +293,6 @@ function AppContent() {
   const [selectedReportClass, setSelectedReportClass] = useState('');
 
   const handleEnterDemo = () => {
-    setQuotaError(null);
     setIsDemo(true);
     setIsFirebaseAuthenticated(true);
     setIsApproved(true);
@@ -562,16 +547,6 @@ function AppContent() {
   );
 
   useEffect(() => {
-    globalFirestoreErrorHandler = (errInfo) => {
-      if (errInfo && errInfo.error && (
-        errInfo.error.includes('Quota limit exceeded') ||
-        errInfo.error.includes('Quota exceeded') ||
-        errInfo.error.includes('quota')
-      )) {
-        setQuotaError(errInfo);
-      }
-    };
-
     const testConnection = async () => {
       addLog("Testing Firebase connection...");
       try {
@@ -675,38 +650,167 @@ function AppContent() {
       }
     });
 
-    return () => {
-      unsubscribeAuth();
-      globalFirestoreErrorHandler = null;
-    };
+    return () => unsubscribeAuth();
   }, []);
 
+  // Load students with smart caching & on-demand fetching to save Firestore read quota (free tier token limits)
   useEffect(() => {
-    if (schoolEmail && (isSharedMode || (isFirebaseAuthenticated && isApproved))) {
+    if (!schoolEmail) return;
+
+    const cacheKey = `students_cache_${schoolEmail}`;
+    
+    // In shared mode (form page for students), use caching with 4-hour TTL and non-realtime getDocs
+    if (isSharedMode) {
+      const loadCachedStudents = async () => {
+        try {
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            // 4 hours TTL = 4 * 60 * 60 * 1000 = 14,400,000 ms
+            if (Date.now() - parsed.timestamp < 14400000) {
+              setStudents(parsed.data);
+              addLog(`Loaded ${parsed.data.length} students from localStorage cache`);
+              return;
+            }
+          }
+
+          // If no cache or cache is expired, do a single getDocs (non-realtime) to save persistent read costs
+          addLog("Cache expired or empty, fetching students from Firestore...");
+          const studentsRef = collection(db, 'students');
+          const qStudents = query(studentsRef, where('schoolEmail', '==', schoolEmail), limit(3000));
+          const snapshot = await getDocs(qStudents);
+          const studentsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
+          
+          setStudents(studentsData);
+          localStorage.setItem(cacheKey, JSON.stringify({
+            timestamp: Date.now(),
+            data: studentsData
+          }));
+          addLog(`Fetched ${studentsData.length} students from Firestore and saved to cache`);
+        } catch (error) {
+          console.error("Error loading students with cache:", error);
+          // Fallback to cache if database error occurs (e.g., offline)
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            setStudents(parsed.data);
+          }
+        }
+      };
+
+      loadCachedStudents();
+    } else if (isFirebaseAuthenticated && isApproved) {
+      // In teacher/admin dashboard mode, use onSnapshot so that student management is real-time,
+      // but also update the localStorage cache whenever data changes so that student public links can benefit!
       const studentsRef = collection(db, 'students');
-      const qStudents = query(studentsRef, where('schoolEmail', '==', schoolEmail));
+      const qStudents = query(studentsRef, where('schoolEmail', '==', schoolEmail), limit(3000));
       const unsubscribeStudents = onSnapshot(qStudents, (snapshot) => {
         const studentsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
         setStudents(studentsData);
+        localStorage.setItem(cacheKey, JSON.stringify({
+          timestamp: Date.now(),
+          data: studentsData
+        }));
       }, (error) => {
         handleFirestoreError(error, OperationType.GET, 'students');
       });
 
-      const habitsRef = collection(db, 'habitRecords');
-      const qHabits = query(habitsRef, where('schoolEmail', '==', schoolEmail));
-      const unsubscribeHabits = onSnapshot(qHabits, (snapshot) => {
-        const habitsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as HabitRecord));
-        setHabitRecords(habitsData);
-      }, (error) => {
-        handleFirestoreError(error, OperationType.GET, 'habitRecords');
-      });
-
       return () => {
         unsubscribeStudents();
-        unsubscribeHabits();
       };
     }
   }, [isFirebaseAuthenticated, schoolEmail, isApproved, isSharedMode]);
+
+  // Fetch Habit Records for Form page on-demand when class or date changes
+  useEffect(() => {
+    if (schoolEmail && (isSharedMode || (isFirebaseAuthenticated && isApproved)) && selectedClass && selectedDate) {
+      setLoadingFormRecords(true);
+      const q = query(
+        collection(db, 'habitRecords'),
+        where('schoolEmail', '==', schoolEmail),
+        where('class', '==', selectedClass),
+        where('date', '==', selectedDate)
+      );
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as HabitRecord));
+        setFormHabitRecords(data);
+        setLoadingFormRecords(false);
+      }, (error) => {
+        console.error("Error loading form habit records:", error);
+        setLoadingFormRecords(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setFormHabitRecords([]);
+    }
+  }, [schoolEmail, isFirebaseAuthenticated, isApproved, isSharedMode, selectedClass, selectedDate]);
+
+  // Fetch Habit Records for Daily Report page on-demand when dailyReportDate changes
+  useEffect(() => {
+    if (currentPage === 'daily' && schoolEmail && (isFirebaseAuthenticated && isApproved) && dailyReportDate) {
+      setLoadingDailyRecords(true);
+      const q = query(
+        collection(db, 'habitRecords'),
+        where('schoolEmail', '==', schoolEmail),
+        where('date', '==', dailyReportDate)
+      );
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as HabitRecord));
+        setDailyHabitRecords(data);
+        setLoadingDailyRecords(false);
+      }, (error) => {
+        console.error("Error loading daily habit records:", error);
+        setLoadingDailyRecords(false);
+      });
+      return () => unsubscribe();
+    }
+  }, [currentPage, schoolEmail, isFirebaseAuthenticated, isApproved, dailyReportDate]);
+
+  // Fetch Habit Records for Monthly Report page on-demand when selectedReportClass changes
+  useEffect(() => {
+    if (currentPage === 'monthly' && schoolEmail && (isFirebaseAuthenticated && isApproved) && selectedReportClass) {
+      setLoadingMonthlyRecords(true);
+      const q = query(
+        collection(db, 'habitRecords'),
+        where('schoolEmail', '==', schoolEmail),
+        where('class', '==', selectedReportClass)
+      );
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as HabitRecord));
+        setMonthlyHabitRecords(data);
+        setLoadingMonthlyRecords(false);
+      }, (error) => {
+        console.error("Error loading monthly habit records:", error);
+        setLoadingMonthlyRecords(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setMonthlyHabitRecords([]);
+    }
+  }, [currentPage, schoolEmail, isFirebaseAuthenticated, isApproved, selectedReportClass]);
+
+  // Fetch Habit Records for Semester Report page on-demand when selectedReportClass changes
+  useEffect(() => {
+    if (currentPage === 'semester' && schoolEmail && (isFirebaseAuthenticated && isApproved) && selectedReportClass) {
+      setLoadingSemesterRecords(true);
+      const q = query(
+        collection(db, 'habitRecords'),
+        where('schoolEmail', '==', schoolEmail),
+        where('class', '==', selectedReportClass)
+      );
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as HabitRecord));
+        setSemesterHabitRecords(data);
+        setLoadingSemesterRecords(false);
+      }, (error) => {
+        console.error("Error loading semester habit records:", error);
+        setLoadingSemesterRecords(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setSemesterHabitRecords([]);
+    }
+  }, [currentPage, schoolEmail, isFirebaseAuthenticated, isApproved, selectedReportClass]);
 
   useEffect(() => {
     if (isOwner) {
@@ -745,6 +849,31 @@ function AppContent() {
     }).catch(() => {
       displayToast('Gagal menyalin link.', true);
     });
+  };
+
+  const handleForceSyncStudents = async () => {
+    if (!schoolEmail) return;
+    setLoadingFormRecords(true);
+    const cacheKey = `students_cache_${schoolEmail}`;
+    try {
+      addLog("Force syncing student roster...");
+      const studentsRef = collection(db, 'students');
+      const qStudents = query(studentsRef, where('schoolEmail', '==', schoolEmail), limit(3000));
+      const snapshot = await getDocs(qStudents);
+      const studentsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
+      
+      setStudents(studentsData);
+      localStorage.setItem(cacheKey, JSON.stringify({
+        timestamp: Date.now(),
+        data: studentsData
+      }));
+      displayToast("🔄 Data murid berhasil disinkronkan dengan server!");
+    } catch (error) {
+      console.error("Error force syncing students:", error);
+      displayToast("Gagal menyinkronkan data murid. Coba lagi nanti.", true);
+    } finally {
+      setLoadingFormRecords(false);
+    }
   };
 
   const handleAddApprovedSchool = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -886,7 +1015,7 @@ function AppContent() {
     const studentObj = students.find(s => s.student_name === selectedStudent && isClassMatch(s.class, selectedClass));
     const actualClass = studentObj ? studentObj.class : selectedClass;
 
-    const isDuplicate = habitRecords.some(item => 
+    const isDuplicate = formHabitRecords.some(item => 
       item.student_name === selectedStudent && 
       item.class === actualClass && 
       item.date === selectedDate
@@ -1285,7 +1414,7 @@ function AppContent() {
     }
 
     const classStudents = students.filter(s => isClassMatch(s.class, selectedClass)).sort((a,b) => a.student_name.localeCompare(b.student_name));
-    const submittedOnDate = habitRecords.filter(item => item.date === selectedDate && isClassMatch(item.class, selectedClass)).map(item => item.student_name);
+    const submittedOnDate = formHabitRecords.filter(item => item.date === selectedDate && isClassMatch(item.class, selectedClass)).map(item => item.student_name);
 
     return (
       <div className="bg-white rounded-3xl shadow-2xl p-8">
@@ -1296,6 +1425,17 @@ function AppContent() {
         )}
         <div className="text-center mb-6">
           <h2 className="text-3xl font-bold text-purple-700">Form Isian Siswa</h2>
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs text-gray-500">
+            <span>💾 Roster murid tersimpan otomatis (Hemat Kuota Free Tier)</span>
+            <button 
+              type="button" 
+              onClick={handleForceSyncStudents} 
+              className="text-purple-600 hover:text-purple-800 font-bold underline cursor-pointer flex items-center gap-1 bg-purple-5 px-2 py-0.5 rounded-md hover:bg-purple-100 transition-colors"
+              title="Klik untuk memperbarui daftar murid langsung dari server jika ada murid baru yang belum muncul"
+            >
+              🔄 Sinkronkan Ulang
+            </button>
+          </div>
         </div>
         <form onSubmit={handleFormSubmit} className="space-y-6">
           <div className="bg-gradient-to-r from-purple-100 to-pink-100 p-6 rounded-2xl">
@@ -1335,7 +1475,7 @@ function AppContent() {
           </div>
 
           <div className="card-habit bg-green-100 p-6 rounded-2xl shadow-md">
-            <input type="hidden" name="worship-type" value={isNonMuslimForm ? 'non-islam' : 'islam'} />
+            <input type="hidden" name="worship-type" value={isNonMuslimForm ? 'non-islam' : 'islam'} readOnly />
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
               <div className="flex items-center">
                 <span className="text-4xl mr-3">{isNonMuslimForm ? '⛪' : '🕌'}</span>
@@ -1490,9 +1630,24 @@ function AppContent() {
           </form>
         </div>
 
+        {/* Search Bar for Large Schools */}
+        <div className="mb-6 bg-white p-4 rounded-2xl border-2 border-red-200 shadow-sm">
+          <label className="block text-sm font-bold mb-2 text-gray-700">🔍 Cari Nama Siswa:</label>
+          <input 
+            type="text" 
+            value={studentSearchQuery} 
+            onChange={(e) => setStudentSearchQuery(e.target.value)} 
+            placeholder="Masukkan nama siswa yang ingin dicari..." 
+            className="w-full p-3 border-2 border-red-300 rounded-xl focus:border-red-500 focus:outline-none shadow-inner"
+          />
+        </div>
+
         <div className="space-y-4">
           {getActiveClasses().map(className => {
-            const classStudents = students.filter(s => s.class === className).sort((a,b) => a.student_name.localeCompare(b.student_name));
+            let classStudents = students.filter(s => s.class === className).sort((a,b) => a.student_name.localeCompare(b.student_name));
+            if (studentSearchQuery.trim()) {
+              classStudents = classStudents.filter(s => s.student_name.toLowerCase().includes(studentSearchQuery.toLowerCase()));
+            }
             if (classStudents.length === 0) return null;
             return (
               <div key={className} className="bg-gray-50 rounded-2xl p-6">
@@ -1548,8 +1703,71 @@ function AppContent() {
     );
   };
 
+  const getWorshipSummary = (r: any) => {
+    if (r.is_non_muslim) {
+      const items = [];
+      if (r.non_muslim_pagi) items.push('Pagi');
+      if (r.non_muslim_malam) items.push('Malam');
+      if (r.non_muslim_kitab) items.push('Kitab');
+      if (r.non_muslim_mingguan) items.push('Mingguan');
+      if (r.non_muslim_keluarga) items.push('Kelg');
+      if (r.non_muslim_lainnya) items.push('Lainnya');
+      return items.length > 0 ? `Non-Islam (${items.length}): ${items.join(', ')}` : 'Tidak mengisi';
+    } else {
+      const items = [];
+      if (r.prayer_subuh) items.push('Subuh');
+      if (r.prayer_dhuhur) items.push('Dhuhur');
+      if (r.prayer_ashar) items.push('Ashar');
+      if (r.prayer_maghrib) items.push('Maghrib');
+      if (r.prayer_isya) items.push('Isya');
+      if (r.dta) items.push('DTA');
+      return items.length > 0 ? `Islam (${items.length}): ${items.join(', ')}` : 'Tidak mengisi';
+    }
+  };
+
+  const getAverageTime = (records: any[], field: string) => {
+    const times = records.map(r => r[field]).filter(Boolean);
+    if (times.length === 0) return '-';
+    const totalMinutes = times.reduce((sum, t) => {
+      const parts = t.split(':');
+      if (parts.length < 2) return sum;
+      return sum + (parseInt(parts[0]) * 60 + parseInt(parts[1]));
+    }, 0);
+    const avgMinutes = Math.round(totalMinutes / times.length);
+    const hh = String(Math.floor(avgMinutes / 60)).padStart(2, '0');
+    const mm = String(avgMinutes % 60).padStart(2, '0');
+    return `${hh}:${mm}`;
+  };
+
+  const getAverageWorshipPercentage = (records: any[]) => {
+    if (records.length === 0) return 0;
+    let totalChecked = 0;
+    records.forEach(r => {
+      if (r.is_non_muslim) {
+        totalChecked += [
+          r.non_muslim_pagi,
+          r.non_muslim_malam,
+          r.non_muslim_kitab,
+          r.non_muslim_mingguan,
+          r.non_muslim_keluarga,
+          r.non_muslim_lainnya
+        ].filter(Boolean).length;
+      } else {
+        totalChecked += [
+          r.prayer_subuh,
+          r.prayer_dhuhur,
+          r.prayer_ashar,
+          r.prayer_maghrib,
+          r.prayer_isya,
+          r.dta
+        ].filter(Boolean).length;
+      }
+    });
+    return Math.round((totalChecked / (records.length * 6)) * 100);
+  };
+
   const renderDailyReportPage = () => {
-    const filteredRecords = habitRecords.filter(record => {
+    const filteredRecords = dailyHabitRecords.filter(record => {
       if (selectedReportClass && !isClassMatch(record.class, selectedReportClass)) return false;
       return true;
     });
@@ -1561,37 +1779,87 @@ function AppContent() {
           <h2 className="text-3xl font-bold text-blue-700">📊 Rekap Harian</h2>
         </div>
         
-        <div className="flex justify-center mb-6">
-          <select 
-            value={selectedReportClass} 
-            onChange={(e) => setSelectedReportClass(e.target.value)}
-            className="p-3 border-2 border-blue-300 rounded-xl focus:border-blue-500 focus:outline-none"
-          >
-            <option value="">Semua Kelas</option>
-            {getActiveClasses().map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+        <div className="flex flex-wrap gap-4 mb-6 justify-center">
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Tanggal Rekap:</label>
+            <input 
+              type="date" 
+              value={dailyReportDate} 
+              onChange={(e) => setDailyReportDate(e.target.value)}
+              className="p-3 border-2 border-blue-300 rounded-xl focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-gray-500 mb-1">Pilih Kelas:</label>
+            <select 
+              value={selectedReportClass} 
+              onChange={(e) => setSelectedReportClass(e.target.value)}
+              className="p-3 border-2 border-blue-300 rounded-xl focus:border-blue-500 focus:outline-none h-[52px]"
+            >
+              <option value="">Semua Kelas</option>
+              {getActiveClasses().map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
+        {loadingDailyRecords ? (
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <p className="text-gray-500 font-medium">Memuat data rekap harian...</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="bg-blue-500 text-white">
                 <th className="p-3 border">Nama</th>
                 <th className="p-3 border">Kelas</th>
-                <th className="p-3 border">Tanggal</th>
-                <th className="p-3 border">Skor %</th>
-                <th className="p-3 border">Kategori</th>
-                <th className="p-3 border">Aksi</th>
+                <th className="p-3 border text-center">Tanggal</th>
+                <th className="p-2 border text-center">⏰ Bangun</th>
+                <th className="p-2 border">🙏 Beribadah</th>
+                <th className="p-2 border">⚽ Olahraga</th>
+                <th className="p-2 border">🥗 Makan</th>
+                <th className="p-2 border text-center">📚 Belajar</th>
+                <th className="p-2 border">🤝 Bersosialisasi</th>
+                <th className="p-2 border text-center">🌙 Tidur</th>
+                <th className="p-3 border text-center">Skor %</th>
+                <th className="p-3 border text-center">Kategori</th>
+                <th className="p-3 border text-center">Aksi</th>
               </tr>
             </thead>
             <tbody>
               {filteredRecords.map(record => (
                 <tr key={record.id} className="hover:bg-gray-50">
-                  <td className="p-3 border">{record.student_name}</td>
+                  <td className="p-3 border font-semibold">{record.student_name}</td>
                   <td className="p-3 border text-center">{record.class}</td>
-                  <td className="p-3 border text-center">{record.date}</td>
-                  <td className="p-3 border text-center font-bold">{record.total_score}%</td>
-                  <td className="p-3 border text-center">{record.category}</td>
+                  <td className="p-3 border text-center white-space:nowrap">{record.date}</td>
+                  <td className="p-2 border text-center text-xs font-bold text-yellow-700 bg-yellow-50">{record.wake_time || '-'}</td>
+                  <td className="p-2 border text-xs bg-green-50">
+                    <span className="font-semibold block">{record.is_non_muslim ? '⛪ Selain Islam' : '🕌 Islam'}</span>
+                    <span className="text-gray-600 block text-[10px] leading-tight">{getWorshipSummary(record).split(': ')[1] || '-'}</span>
+                  </td>
+                  <td className="p-2 border text-xs bg-blue-50">
+                    <span className="font-semibold block">{record.exercise ? '⚽ Ya' : '❌ Tidak'}</span>
+                    {record.exercise && <span className="text-gray-600 block text-[10px] leading-tight truncate max-w-[120px]">{record.exercise_type || '-'}</span>}
+                  </td>
+                  <td className="p-2 border text-xs bg-orange-50">
+                    <span className="font-semibold block">{record.healthy_food ? '🥗 Ya' : '❌ Tidak'}</span>
+                    {record.healthy_food && <span className="text-gray-600 block text-[10px] leading-tight truncate max-w-[120px]">{record.food_menu || '-'}</span>}
+                  </td>
+                  <td className="p-2 border text-center text-xs font-semibold text-purple-700 bg-purple-50">{record.study_duration ? `${record.study_duration} mnt` : '0 mnt'}</td>
+                  <td className="p-2 border text-xs bg-pink-50 max-w-[150px] truncate" title={record.social_activity || '-'}>{record.social_activity || '-'}</td>
+                  <td className="p-2 border text-center text-xs font-bold text-indigo-700 bg-indigo-50">{record.sleep_time || '-'}</td>
+                  <td className="p-3 border text-center font-bold text-blue-600">{record.total_score}%</td>
+                  <td className="p-3 border text-center">
+                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                      record.category === 'Sangat Baik' ? 'bg-green-100 text-green-800' :
+                      record.category === 'Baik' ? 'bg-blue-100 text-blue-800' :
+                      record.category === 'Mulai Berkembang' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {record.category}
+                    </span>
+                  </td>
                   <td className="p-3 border text-center">
                     <button onClick={() => handleDeleteHabitRecord(record.id)} className="bg-red-100 hover:bg-red-200 text-red-600 p-2 rounded-lg transition-colors" title="Hapus Data">
                       🗑️
@@ -1601,24 +1869,73 @@ function AppContent() {
               ))}
               {filteredRecords.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-6 text-center text-gray-500">Tidak ada data.</td>
+                  <td colSpan={13} className="p-6 text-center text-gray-500">Tidak ada data.</td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+        )}
       </div>
     );
   };
 
   const renderMonthlyReportPage = () => {
-    const filteredRecords = habitRecords.filter(record => {
+    if (!selectedReportClass) {
+      return (
+        <div className="bg-white rounded-3xl shadow-2xl p-8">
+          <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl">← Kembali ke Beranda</button>
+          <div className="text-center mb-6">
+            <h2 className="text-3xl font-bold text-yellow-700">📈 Rekap Bulanan</h2>
+          </div>
+          
+          <div className="flex flex-wrap gap-4 mb-8 justify-center">
+            <select 
+              value={selectedReportClass} 
+              onChange={(e) => setSelectedReportClass(e.target.value)}
+              className="p-3 border-2 border-yellow-300 rounded-xl focus:border-yellow-500 focus:outline-none"
+            >
+              <option value="">-- Pilih Kelas Terlebih Dahulu --</option>
+              {getActiveClasses().map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select 
+              value={selectedMonth} 
+              onChange={(e) => setSelectedMonth(Number(e.target.value))}
+              className="p-3 border-2 border-yellow-300 rounded-xl focus:border-yellow-500 focus:outline-none"
+            >
+              {Array.from({length: 12}, (_, i) => i + 1).map(m => (
+                <option key={m} value={m}>{new Date(2000, m - 1).toLocaleString('id-ID', { month: 'long' })}</option>
+              ))}
+            </select>
+            <select 
+              value={selectedYear} 
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              className="p-3 border-2 border-yellow-300 rounded-xl focus:border-yellow-500 focus:outline-none"
+            >
+              {[...Array(5)].map((_, i) => {
+                const year = new Date().getFullYear() - 2 + i;
+                return <option key={year} value={year}>{year}</option>;
+              })}
+            </select>
+          </div>
+
+          <div className="text-center py-12 bg-yellow-50 rounded-2xl border-2 border-dashed border-yellow-200">
+            <span className="text-4xl">📊</span>
+            <h3 className="text-xl font-bold text-yellow-800 mt-4">Silakan Pilih Kelas</h3>
+            <p className="text-gray-600 mt-2 max-w-md mx-auto">
+              Untuk sekolah dengan jumlah siswa yang besar (&gt;500 siswa), rekap bulanan ditampilkan per kelas untuk performa terbaik. Silakan pilih salah satu kelas di atas.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    const filteredRecords = monthlyHabitRecords.filter(record => {
       const recordDate = new Date(record.date);
-      if (selectedReportClass && !isClassMatch(record.class, selectedReportClass)) return false;
       return recordDate.getMonth() + 1 === selectedMonth && recordDate.getFullYear() === selectedYear;
     });
 
-    const filteredStudents = selectedReportClass ? students.filter(s => isClassMatch(s.class, selectedReportClass)) : students;
+    const filteredStudents = students.filter(s => isClassMatch(s.class, selectedReportClass));
 
     const studentAverages = filteredStudents.map(student => {
       const studentRecords = filteredRecords.filter(r => r.student_name === student.student_name && r.class === student.class);
@@ -1631,26 +1948,16 @@ function AppContent() {
         ...student,
         averageScore,
         category: getCategory(averageScore),
-        daysFilled: studentRecords.length
+        daysFilled: studentRecords.length,
+        records: studentRecords
       };
     }).filter(Boolean);
 
     let chartData = [];
-    if (selectedReportClass) {
-      chartData = studentAverages.map((student: any) => ({
-        name: student.student_name,
-        'Rata-rata Skor': student.averageScore,
-      }));
-    } else {
-      chartData = getActiveClasses().map(className => {
-        const classStudents = studentAverages.filter((s: any) => s.class === className);
-        const avgScore = classStudents.length > 0 ? Math.round(classStudents.reduce((sum, s: any) => sum + s.averageScore, 0) / classStudents.length) : 0;
-        return {
-          name: className,
-          'Rata-rata Skor': avgScore,
-        };
-      });
-    }
+    chartData = studentAverages.map((student: any) => ({
+      name: student.student_name,
+      'Rata-rata Skor': student.averageScore,
+    }));
 
     return (
       <div className="bg-white rounded-3xl shadow-2xl p-8">
@@ -1689,68 +1996,162 @@ function AppContent() {
           </select>
         </div>
 
-        {chartData.length > 0 && (
-          <div className="mb-8 bg-yellow-50 p-6 rounded-2xl border-2 border-yellow-100">
-            <h3 className="text-xl font-bold text-center text-yellow-800 mb-6">
-              Grafik Rata-rata Skor {selectedReportClass ? `Siswa ${selectedReportClass}` : 'Per Kelas'}
-            </h3>
-            <div className="h-80 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis domain={[0, 100]} />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="Rata-rata Skor" fill="#eab308" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+        {loadingMonthlyRecords ? (
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-yellow-500 mx-auto mb-4"></div>
+            <p className="text-gray-500 font-medium">Memuat data rekap bulanan kelas {selectedReportClass}...</p>
           </div>
-        )}
+        ) : (
+          <>
+            {chartData.length > 0 && (
+              <div className="mb-8 bg-yellow-50 p-6 rounded-2xl border-2 border-yellow-100">
+                <h3 className="text-xl font-bold text-center text-yellow-800 mb-6">
+                  Grafik Rata-rata Skor Siswa {selectedReportClass}
+                </h3>
+                <div className="h-80 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="name" />
+                      <YAxis domain={[0, 100]} />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="Rata-rata Skor" fill="#eab308" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
 
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="bg-yellow-500 text-white">
-                <th className="p-3 border">Nama</th>
-                <th className="p-3 border">Kelas</th>
-                <th className="p-3 border">Hari Mengisi</th>
-                <th className="p-3 border">Rata-rata Skor %</th>
-                <th className="p-3 border">Kategori</th>
-              </tr>
-            </thead>
-            <tbody>
-              {studentAverages.length > 0 ? studentAverages.map((student: any) => (
-                <tr key={student.id} className="hover:bg-gray-50">
-                  <td className="p-3 border">{student.student_name}</td>
-                  <td className="p-3 border text-center">{student.class}</td>
-                  <td className="p-3 border text-center">{student.daysFilled} hari</td>
-                  <td className="p-3 border text-center font-bold">{student.averageScore}%</td>
-                  <td className="p-3 border text-center">{student.category}</td>
-                </tr>
-              )) : (
-                <tr>
-                  <td colSpan={5} className="p-6 text-center text-gray-500">Tidak ada data untuk bulan ini.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="bg-yellow-500 text-white">
+                    <th className="p-3 border">Nama</th>
+                    <th className="p-3 border">Kelas</th>
+                    <th className="p-3 border text-center">Hari Mengisi</th>
+                    <th className="p-2 border text-center">⏰ Rata Bangun</th>
+                    <th className="p-2 border text-center">🙏 Skor Ibadah</th>
+                    <th className="p-2 border text-center">⚽ Rutin Olahraga</th>
+                    <th className="p-2 border text-center">🥗 Makan Sehat</th>
+                    <th className="p-2 border text-center">📚 Rata Belajar</th>
+                    <th className="p-2 border text-center">🤝 Aktif Sosial</th>
+                    <th className="p-2 border text-center">🌙 Rata Tidur</th>
+                    <th className="p-3 border text-center">Rata Skor %</th>
+                    <th className="p-3 border text-center">Kategori</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {studentAverages.length > 0 ? studentAverages.map((student: any) => (
+                    <tr key={student.id} className="hover:bg-gray-50">
+                      <td className="p-3 border font-semibold">{student.student_name}</td>
+                      <td className="p-3 border text-center">{student.class}</td>
+                      <td className="p-3 border text-center">{student.daysFilled} hari</td>
+                      {(() => {
+                        const recs = student.records || [];
+                        const avgWake = getAverageTime(recs, 'wake_time');
+                        const avgWorship = getAverageWorshipPercentage(recs);
+                        const exercisePct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.exercise).length / recs.length) * 100) : 0;
+                        const foodPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.healthy_food).length / recs.length) * 100) : 0;
+                        const avgStudy = recs.length > 0 ? Math.round(recs.reduce((sum: number, r: any) => sum + (parseInt(r.study_duration) || 0), 0) / recs.length) : 0;
+                        const socialPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.social_activity && r.social_activity !== '-').length / recs.length) * 100) : 0;
+                        const avgSleep = getAverageTime(recs, 'sleep_time');
+
+                        return (
+                          <>
+                            <td className="p-2 border text-center text-xs font-bold text-yellow-700 bg-yellow-50">{avgWake}</td>
+                            <td className="p-2 border text-center text-xs font-bold text-green-700 bg-green-50">{avgWorship}%</td>
+                            <td className="p-2 border text-center text-xs font-bold text-blue-700 bg-blue-50">{exercisePct}%</td>
+                            <td className="p-2 border text-center text-xs font-bold text-orange-700 bg-orange-50">{foodPct}%</td>
+                            <td className="p-2 border text-center text-xs font-bold text-purple-700 bg-purple-50">{avgStudy} mnt</td>
+                            <td className="p-2 border text-center text-xs font-bold text-pink-700 bg-pink-50">{socialPct}%</td>
+                            <td className="p-2 border text-center text-xs font-bold text-indigo-700 bg-indigo-50">{avgSleep}</td>
+                          </>
+                        );
+                      })()}
+                      <td className="p-3 border text-center font-bold text-yellow-600 bg-yellow-50/50">{student.averageScore}%</td>
+                      <td className="p-3 border text-center">
+                        <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                          student.category === 'Sangat Baik' ? 'bg-green-100 text-green-800' :
+                          student.category === 'Baik' ? 'bg-blue-100 text-blue-800' :
+                          student.category === 'Mulai Berkembang' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {student.category}
+                        </span>
+                      </td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={12} className="p-6 text-center text-gray-500">Tidak ada data untuk bulan ini.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
     );
   };
 
   const renderSemesterReportPage = () => {
-    const filteredRecords = habitRecords.filter(record => {
+    if (!selectedReportClass) {
+      return (
+        <div className="bg-white rounded-3xl shadow-2xl p-8">
+          <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl">← Kembali ke Beranda</button>
+          <div className="text-center mb-6">
+            <h2 className="text-3xl font-bold text-purple-700">🏆 Rekap Semester</h2>
+          </div>
+          
+          <div className="flex flex-wrap gap-4 mb-8 justify-center">
+            <select 
+              value={selectedReportClass} 
+              onChange={(e) => setSelectedReportClass(e.target.value)}
+              className="p-3 border-2 border-purple-300 rounded-xl focus:border-purple-500 focus:outline-none"
+            >
+              <option value="">-- Pilih Kelas Terlebih Dahulu --</option>
+              {getActiveClasses().map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select 
+              value={selectedSemester} 
+              onChange={(e) => setSelectedSemester(Number(e.target.value))}
+              className="p-3 border-2 border-purple-300 rounded-xl focus:border-purple-500 focus:outline-none"
+            >
+              <option value={1}>Semester 1 (Jul - Des)</option>
+              <option value={2}>Semester 2 (Jan - Jun)</option>
+            </select>
+            <select 
+              value={selectedSemesterYear} 
+              onChange={(e) => setSelectedSemesterYear(Number(e.target.value))}
+              className="p-3 border-2 border-purple-300 rounded-xl focus:border-purple-500 focus:outline-none"
+            >
+              {[...Array(5)].map((_, i) => {
+                const year = new Date().getFullYear() - 2 + i;
+                return <option key={year} value={year}>{year}</option>;
+              })}
+            </select>
+          </div>
+
+          <div className="text-center py-12 bg-purple-50 rounded-2xl border-2 border-dashed border-purple-200">
+            <span className="text-4xl">🏆</span>
+            <h3 className="text-xl font-bold text-purple-800 mt-4">Silakan Pilih Kelas</h3>
+            <p className="text-gray-600 mt-2 max-w-md mx-auto">
+              Untuk sekolah dengan jumlah siswa yang besar (&gt;500 siswa), rekap semester ditampilkan per kelas untuk performa terbaik. Silakan pilih salah satu kelas di atas.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    const filteredRecords = semesterHabitRecords.filter(record => {
       const recordDate = new Date(record.date);
       const isFirstHalf = recordDate.getMonth() < 6; // Jan - Jun
       const recordSemester = isFirstHalf ? 2 : 1;
-      if (selectedReportClass && !isClassMatch(record.class, selectedReportClass)) return false;
       return recordSemester === selectedSemester && recordDate.getFullYear() === selectedSemesterYear;
     });
 
-    const filteredStudents = selectedReportClass ? students.filter(s => isClassMatch(s.class, selectedReportClass)) : students;
+    const filteredStudents = students.filter(s => isClassMatch(s.class, selectedReportClass));
 
     const studentAverages = filteredStudents.map(student => {
       const studentRecords = filteredRecords.filter(r => r.student_name === student.student_name && r.class === student.class);
@@ -1763,7 +2164,8 @@ function AppContent() {
         ...student,
         averageScore,
         category: getCategory(averageScore),
-        daysFilled: studentRecords.length
+        daysFilled: studentRecords.length,
+        records: studentRecords
       };
     }).filter(Boolean);
 
@@ -1879,27 +2281,6 @@ function AppContent() {
           </div>
         </div>
 
-        <div className="mb-8 bg-white p-6 rounded-2xl border-2 border-purple-100 print:hidden">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xl font-bold text-purple-800">📈 Grafik Kemajuan Semester</h3>
-            <button onClick={downloadChart} className="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-bold flex items-center gap-2">
-              📥 Download Grafik
-            </button>
-          </div>
-          <div className="h-[300px] w-full semester-chart">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis domain={[0, 100]} />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="skor" name="Rata-rata Skor (%)" fill="#9333ea" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
         <div className="flex flex-wrap gap-4 mb-6 justify-center print:hidden">
           <select 
             value={selectedReportClass} 
@@ -1929,34 +2310,102 @@ function AppContent() {
           </select>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="bg-purple-500 text-white">
-                <th className="p-3 border">Nama</th>
-                <th className="p-3 border">Kelas</th>
-                <th className="p-3 border">Hari Mengisi</th>
-                <th className="p-3 border">Rata-rata Skor %</th>
-                <th className="p-3 border">Kategori</th>
-              </tr>
-            </thead>
-            <tbody>
-              {studentAverages.length > 0 ? studentAverages.map((student: any) => (
-                <tr key={student.id} className="hover:bg-gray-50">
-                  <td className="p-3 border">{student.student_name}</td>
-                  <td className="p-3 border text-center">{student.class}</td>
-                  <td className="p-3 border text-center">{student.daysFilled} hari</td>
-                  <td className="p-3 border text-center font-bold">{student.averageScore}%</td>
-                  <td className="p-3 border text-center">{student.category}</td>
-                </tr>
-              )) : (
-                <tr>
-                  <td colSpan={5} className="p-6 text-center text-gray-500">Tidak ada data untuk semester ini.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        {loadingSemesterRecords ? (
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500 mx-auto mb-4"></div>
+            <p className="text-gray-500 font-medium">Memuat data rekap semester kelas {selectedReportClass}...</p>
+          </div>
+        ) : (
+          <>
+            <div className="mb-8 bg-white p-6 rounded-2xl border-2 border-purple-100 print:hidden">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold text-purple-800">📈 Grafik Kemajuan Semester</h3>
+                <button onClick={downloadChart} className="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-bold flex items-center gap-2">
+                  📥 Download Grafik
+                </button>
+              </div>
+              <div className="h-[300px] w-full semester-chart">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="name" />
+                    <YAxis domain={[0, 100]} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="skor" name="Rata-rata Skor (%)" fill="#9333ea" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="bg-purple-500 text-white">
+                    <th className="p-3 border">Nama</th>
+                    <th className="p-3 border">Kelas</th>
+                    <th className="p-3 border text-center">Hari Mengisi</th>
+                    <th className="p-2 border text-center">⏰ Rata Bangun</th>
+                    <th className="p-2 border text-center">🙏 Skor Ibadah</th>
+                    <th className="p-2 border text-center">⚽ Rutin Olahraga</th>
+                    <th className="p-2 border text-center">🥗 Makan Sehat</th>
+                    <th className="p-2 border text-center">📚 Rata Belajar</th>
+                    <th className="p-2 border text-center">🤝 Aktif Sosial</th>
+                    <th className="p-2 border text-center">🌙 Rata Tidur</th>
+                    <th className="p-3 border text-center">Rata Skor %</th>
+                    <th className="p-3 border text-center">Kategori</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {studentAverages.length > 0 ? studentAverages.map((student: any) => (
+                    <tr key={student.id} className="hover:bg-gray-50">
+                      <td className="p-3 border font-semibold">{student.student_name}</td>
+                      <td className="p-3 border text-center">{student.class}</td>
+                      <td className="p-3 border text-center">{student.daysFilled} hari</td>
+                      {(() => {
+                        const recs = student.records || [];
+                        const avgWake = getAverageTime(recs, 'wake_time');
+                        const avgWorship = getAverageWorshipPercentage(recs);
+                        const exercisePct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.exercise).length / recs.length) * 100) : 0;
+                        const foodPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.healthy_food).length / recs.length) * 100) : 0;
+                        const avgStudy = recs.length > 0 ? Math.round(recs.reduce((sum: number, r: any) => sum + (parseInt(r.study_duration) || 0), 0) / recs.length) : 0;
+                        const socialPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.social_activity && r.social_activity !== '-').length / recs.length) * 100) : 0;
+                        const avgSleep = getAverageTime(recs, 'sleep_time');
+
+                        return (
+                          <>
+                            <td className="p-2 border text-center text-xs font-bold text-yellow-700 bg-yellow-50">{avgWake}</td>
+                            <td className="p-2 border text-center text-xs font-bold text-green-700 bg-green-50">{avgWorship}%</td>
+                            <td className="p-2 border text-center text-xs font-bold text-blue-700 bg-blue-50">{exercisePct}%</td>
+                            <td className="p-2 border text-center text-xs font-bold text-orange-700 bg-orange-50">{foodPct}%</td>
+                            <td className="p-2 border text-center text-xs font-bold text-purple-700 bg-purple-50">{avgStudy} mnt</td>
+                            <td className="p-2 border text-center text-xs font-bold text-pink-700 bg-pink-50">{socialPct}%</td>
+                            <td className="p-2 border text-center text-xs font-bold text-indigo-700 bg-indigo-50">{avgSleep}</td>
+                          </>
+                        );
+                      })()}
+                      <td className="p-3 border text-center font-bold text-purple-600 bg-purple-50/50">{student.averageScore}%</td>
+                      <td className="p-3 border text-center">
+                        <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                          student.category === 'Sangat Baik' ? 'bg-green-100 text-green-800' :
+                          student.category === 'Baik' ? 'bg-blue-100 text-blue-800' :
+                          student.category === 'Mulai Berkembang' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {student.category}
+                        </span>
+                      </td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={12} className="p-6 text-center text-gray-500">Tidak ada data untuk semester ini.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
 
         {showReportPreview && (
           <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[60] p-4 overflow-y-auto">
@@ -1994,26 +2443,51 @@ function AppContent() {
                   </div>
                 </div>
 
-                <table className="w-full border-collapse border border-black text-sm">
+                 <table className="w-full border-collapse border border-black text-sm">
                   <thead>
                     <tr className="bg-gray-100">
                       <th className="border border-black p-2 text-center w-10">No</th>
                       <th className="border border-black p-2">Nama Siswa</th>
                       <th className="border border-black p-2 text-center">Kelas</th>
+                      <th className="border border-black p-2 text-center">⏰ Bangun</th>
+                      <th className="border border-black p-2 text-center">🙏 Ibadah</th>
+                      <th className="border border-black p-2 text-center">⚽ Olahraga</th>
+                      <th className="border border-black p-2 text-center">🥗 Makan</th>
+                      <th className="border border-black p-2 text-center">📚 Belajar</th>
+                      <th className="border border-black p-2 text-center">🤝 Sosial</th>
+                      <th className="border border-black p-2 text-center">🌙 Tidur</th>
                       <th className="border border-black p-2 text-center">Skor (%)</th>
-                      <th className="border border-black p-2">Kategori</th>
+                      <th className="border border-black p-2 text-center">Kategori</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {studentAverages.map((student: any, index: number) => (
-                      <tr key={student.id}>
-                        <td className="border border-black p-2 text-center">{index + 1}</td>
-                        <td className="border border-black p-2">{student.student_name}</td>
-                        <td className="border border-black p-2 text-center">{student.class}</td>
-                        <td className="border border-black p-2 text-center font-bold">{student.averageScore}%</td>
-                        <td className="border border-black p-2">{student.category}</td>
-                      </tr>
-                    ))}
+                    {studentAverages.map((student: any, index: number) => {
+                      const recs = student.records || [];
+                      const avgWake = getAverageTime(recs, 'wake_time');
+                      const avgWorship = getAverageWorshipPercentage(recs);
+                      const exercisePct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.exercise).length / recs.length) * 100) : 0;
+                      const foodPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.healthy_food).length / recs.length) * 100) : 0;
+                      const avgStudy = recs.length > 0 ? Math.round(recs.reduce((sum: number, r: any) => sum + (parseInt(r.study_duration) || 0), 0) / recs.length) : 0;
+                      const socialPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.social_activity && r.social_activity !== '-').length / recs.length) * 100) : 0;
+                      const avgSleep = getAverageTime(recs, 'sleep_time');
+
+                      return (
+                        <tr key={student.id}>
+                          <td className="border border-black p-2 text-center">{index + 1}</td>
+                          <td className="border border-black p-2 font-bold">{student.student_name}</td>
+                          <td className="border border-black p-2 text-center">{student.class}</td>
+                          <td className="border border-black p-2 text-center">{avgWake}</td>
+                          <td className="border border-black p-2 text-center">{avgWorship}%</td>
+                          <td className="border border-black p-2 text-center">{exercisePct}%</td>
+                          <td className="border border-black p-2 text-center">{foodPct}%</td>
+                          <td className="border border-black p-2 text-center">{avgStudy} mnt</td>
+                          <td className="border border-black p-2 text-center">{socialPct}%</td>
+                          <td className="border border-black p-2 text-center">{avgSleep}</td>
+                          <td className="border border-black p-2 text-center font-bold">{student.averageScore}%</td>
+                          <td className="border border-black p-2 text-center">{student.category}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
 
@@ -2108,71 +2582,6 @@ function AppContent() {
       </div>
     </div>
   );
-
-  if (quotaError && !isDemo) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center p-4 font-sans text-gray-800">
-        <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full text-center border-4 border-amber-100 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-amber-500 to-orange-500"></div>
-          
-          <div className="w-20 h-20 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
-            <Zap className="w-10 h-10 animate-pulse" />
-          </div>
-          
-          <h1 className="text-3xl font-extrabold text-gray-900 mb-3 tracking-tight">Batas Kuota Harian Terlampaui</h1>
-          <div className="mb-6">
-            <p className="text-amber-700 font-semibold px-4 bg-amber-50 py-2 rounded-xl inline-block text-sm">
-              ⚠️ Kuota Firestore Spark Plan Habis
-            </p>
-          </div>
-          
-          <div className="text-left text-gray-600 space-y-4 mb-8 text-sm leading-relaxed">
-            <p>
-              Halo <b>{auth.currentUser?.displayName || auth.currentUser?.email || 'Pengguna'}</b>, aplikasi <b>SIMO-G7KAIH</b> saat ini sedang mengalami pembatasan karena pembacaan data harian gratis (50.000 limit) dari Google Firebase telah habis.
-            </p>
-            <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 space-y-2">
-              <p className="font-bold text-gray-800 flex items-center gap-1.5">
-                <Info className="w-4 h-4 text-purple-600" /> Informasi Penting:
-              </p>
-              <ul className="list-disc list-inside space-y-1 text-gray-500 pl-1">
-                <li>Data Anda (Siswa, Guru, Rekap Harian) <b>tetap aman dan tidak hilang</b>.</li>
-                <li>Kuota akan otomatis direset kembali ke nol oleh Firebase besok siang sekitar pukul <b>14.00 - 15.00 WIB</b>.</li>
-                <li>Setelah direset, aplikasi akan berfungsi kembali seperti biasa secara otomatis.</li>
-              </ul>
-            </div>
-            <p className="text-xs text-gray-400">
-              Jika ini adalah domain sekolah aktif dengan banyak siswa, kami sangat menyarankan untuk meng-upgrade database Firebase Anda ke paket bayar-sesuai-pemakaian (Blaze Plan) agar tidak terhambat oleh batas harian.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <button 
-              onClick={handleEnterDemo}
-              className="w-full bg-purple-600 hover:bg-purple-700 text-white py-4 rounded-xl text-lg font-bold shadow-xl shadow-purple-100 transition-all transform hover:-translate-y-0.5 flex items-center justify-center gap-2"
-            >
-              <PlayCircle className="w-5 h-5" /> Masuk ke Mode Demo (Uji Coba)
-            </button>
-            
-            <a 
-              href="https://console.firebase.google.com/project/gen-lang-client-0172692882/firestore/databases/ai-studio-c4c93937-5628-414f-b345-4021d4a11b71/data?openUpgradeDialog=true" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="block w-full bg-white border-2 border-amber-300 text-amber-700 hover:bg-amber-50 py-3.5 rounded-xl text-md font-bold transition-all flex items-center justify-center gap-2"
-            >
-              <Settings className="w-4 h-4" /> Buka Firebase Console (Upgrade)
-            </a>
-
-            <button 
-              onClick={() => window.location.reload()}
-              className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl text-sm font-bold transition-all"
-            >
-              🔄 Refresh Halaman
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   if (currentPage === 'landing' && !isSharedMode && !isFirebaseAuthenticated) {
     return renderLandingPage();
