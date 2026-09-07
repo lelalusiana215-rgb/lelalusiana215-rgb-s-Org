@@ -1,6 +1,6 @@
 import * as React from 'react';
 const { useState, useEffect, useRef } = React;
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDoc, setDoc, getDocs, getDocFromServer, limit } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDoc, setDoc, getDocs, getDocFromServer } from 'firebase/firestore';
 import { db, auth, signInWithGoogle, signInWithGithub } from './firebase';
 import { Student, HabitRecord } from './types';
 import * as XLSX from 'xlsx';
@@ -24,8 +24,7 @@ import {
   Mail,
   Info,
   LogOut,
-  ChevronLeft,
-  X
+  ChevronLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -173,10 +172,11 @@ interface FirestoreErrorInfo {
   }
 }
 
+let globalFirestoreErrorHandler: ((errInfo: any) => void) | null = null;
+
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errMsg = error instanceof Error ? error.message : String(error);
   const errInfo: FirestoreErrorInfo = {
-    error: errMsg,
+    error: error instanceof Error ? error.message : String(error),
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -193,26 +193,41 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     operationType,
     path
   }
-  const isQuota = errMsg.toLowerCase().includes('quota') || errMsg.toLowerCase().includes('limit exceeded') || errMsg.toLowerCase().includes('resource-exhausted');
-  
+
+  const errMessage = errInfo.error || '';
+  const isQuota = errMessage.includes('Quota limit exceeded') || 
+                  errMessage.includes('Quota exceeded') || 
+                  errMessage.toLowerCase().includes('quota');
+
   if (isQuota) {
-    console.warn('Firestore Quota Limit (gracefully handled): ', JSON.stringify(errInfo));
-  } else {
-    console.error('Firestore Error: ', JSON.stringify(errInfo));
-  }
-  
-  if (typeof (window as any).onFirestoreError === 'function') {
-    (window as any).onFirestoreError(errMsg);
+    console.warn('Firestore Quota Limit Reached (Handled): ', JSON.stringify(errInfo));
+    if (globalFirestoreErrorHandler) {
+      try {
+        globalFirestoreErrorHandler(errInfo);
+      } catch (e) {
+        console.error('Error in global error handler:', e);
+      }
+    }
+    // Gracefully catch and handle quota error without throwing uncaught exceptions to prevent crashing the applet
+    return;
   }
 
-  if (!isQuota) {
-    throw new Error(JSON.stringify(errInfo));
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  if (globalFirestoreErrorHandler) {
+    try {
+      globalFirestoreErrorHandler(errInfo);
+    } catch (e) {
+      console.error('Error in global error handler:', e);
+    }
   }
+
+  throw new Error(JSON.stringify(errInfo));
 }
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('landing');
   const [isSharedMode, setIsSharedMode] = useState(false);
+  const [quotaError, setQuotaError] = useState<any>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false); // Teacher password auth
   const [isFirebaseAuthenticated, setIsFirebaseAuthenticated] = useState(false); // Firebase auth
   const [isDemo, setIsDemo] = useState(false);
@@ -231,8 +246,6 @@ function AppContent() {
   const [showPassword, setShowPassword] = useState(false);
   const [confirmDeleteClass, setConfirmDeleteClass] = useState<string | null>(null);
   const [isNonMuslimForm, setIsNonMuslimForm] = useState(false);
-  const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
-  const [isQuotaBannerDismissed, setIsQuotaBannerDismissed] = useState(false);
 
   // Debug State
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
@@ -294,6 +307,7 @@ function AppContent() {
   const [selectedReportClass, setSelectedReportClass] = useState('');
 
   const handleEnterDemo = () => {
+    setQuotaError(null);
     setIsDemo(true);
     setIsFirebaseAuthenticated(true);
     setIsApproved(true);
@@ -548,6 +562,16 @@ function AppContent() {
   );
 
   useEffect(() => {
+    globalFirestoreErrorHandler = (errInfo) => {
+      if (errInfo && errInfo.error && (
+        errInfo.error.includes('Quota limit exceeded') ||
+        errInfo.error.includes('Quota exceeded') ||
+        errInfo.error.includes('quota')
+      )) {
+        setQuotaError(errInfo);
+      }
+    };
+
     const testConnection = async () => {
       addLog("Testing Firebase connection...");
       try {
@@ -602,77 +626,33 @@ function AppContent() {
               setCheckingApproval(false);
             } else {
               setIsOwner(false);
-              const rawEmail = (user.email || '').trim();
-              const userEmail = rawEmail.toLowerCase();
               addLog(`Checking approval for: ${userEmail}`);
-              let isFoundAdmin = false;
-              let isFoundTeacher = false;
-              let foundSchoolEmail = '';
-
+              const docRef = doc(db, 'approvedSchools', userEmail);
               try {
-                // Check approvedSchools with lowercase ID first
-                const docRefLower = doc(db, 'approvedSchools', userEmail);
-                let docSnap = await getDoc(docRefLower);
-                
-                // Fallback to raw email casing if not found
-                if (!docSnap.exists() && rawEmail && rawEmail !== userEmail) {
-                  addLog(`Retrying admin check with raw casing: ${rawEmail}`);
-                  const docRefRaw = doc(db, 'approvedSchools', rawEmail);
-                  docSnap = await getDoc(docRefRaw);
-                }
-
+                const docSnap = await getDoc(docRef);
                 if (docSnap.exists()) {
-                  isFoundAdmin = true;
-                  foundSchoolEmail = userEmail;
-                } else {
-                  // Check teachers with lowercase ID first
-                  addLog("Not school admin, checking teacher status");
-                  const teacherRefLower = doc(db, 'teachers', userEmail);
-                  let teacherDocSnap = await getDoc(teacherRefLower);
-
-                  // Fallback to raw email casing if not found
-                  if (!teacherDocSnap.exists() && rawEmail && rawEmail !== userEmail) {
-                    addLog(`Retrying teacher check with raw casing: ${rawEmail}`);
-                    const teacherRefRaw = doc(db, 'teachers', rawEmail);
-                    teacherDocSnap = await getDoc(teacherRefRaw);
-                  }
-
-                  if (teacherDocSnap.exists()) {
-                    isFoundTeacher = true;
-                    foundSchoolEmail = (teacherDocSnap.data().schoolEmail || '').toLowerCase();
-                  }
-                }
-
-                if (isFoundAdmin) {
                   addLog("User approved as school admin");
                   setIsSchoolAdmin(true);
                   setIsApproved(true);
-                  setSchoolEmail(foundSchoolEmail);
-                } else if (isFoundTeacher) {
-                  addLog("User approved as teacher");
-                  setIsSchoolAdmin(false);
-                  setIsApproved(true);
-                  setSchoolEmail(foundSchoolEmail);
+                  setSchoolEmail(userEmail);
                 } else {
-                  addLog("User not found in approved lists");
-                  setIsSchoolAdmin(false);
-                  setIsApproved(false);
+                  addLog("Not school admin, checking teacher status");
+                  const teacherDocRef = doc(db, 'teachers', userEmail);
+                  const teacherDocSnap = await getDoc(teacherDocRef);
+                  if (teacherDocSnap.exists()) {
+                    addLog("User approved as teacher");
+                    setIsSchoolAdmin(false);
+                    setIsApproved(true);
+                    setSchoolEmail(teacherDocSnap.data().schoolEmail);
+                  } else {
+                    addLog("User not found in approved lists");
+                    setIsSchoolAdmin(false);
+                    setIsApproved(false);
+                  }
                 }
               } catch (error) {
                 addLog(`Error fetching approval docs: ${error instanceof Error ? error.message : String(error)}`);
-                const cachedIsSchoolAdmin = localStorage.getItem('cached_isSchoolAdmin') === 'true';
-                const cachedIsApproved = localStorage.getItem('cached_isApproved') === 'true';
-                const cachedSchoolEmail = localStorage.getItem('cached_schoolEmail');
-                
-                if (cachedIsApproved && cachedSchoolEmail) {
-                  addLog("Restored auth status from local cache due to Firestore quota limitation");
-                  setIsSchoolAdmin(cachedIsSchoolAdmin);
-                  setIsApproved(true);
-                  setSchoolEmail(cachedSchoolEmail);
-                  setIsQuotaExceeded(true);
-                } else {
-                  handleFirestoreError(error, OperationType.GET, 'approvedSchools/' + userEmail);
-                }
+                handleFirestoreError(error, OperationType.GET, 'approvedSchools/' + userEmail);
               }
               setCheckingApproval(false);
             }
@@ -695,84 +675,16 @@ function AppContent() {
       }
     });
 
-    return () => unsubscribeAuth();
-  }, []);
-
-  useEffect(() => {
-    if (isApproved && schoolEmail) {
-      localStorage.setItem('cached_isSchoolAdmin', String(isSchoolAdmin));
-      localStorage.setItem('cached_isApproved', 'true');
-      localStorage.setItem('cached_schoolEmail', schoolEmail);
-    }
-  }, [isApproved, isSchoolAdmin, schoolEmail]);
-
-  useEffect(() => {
-    (window as any).onFirestoreError = (msg: string) => {
-      const isQuota = msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('limit exceeded') || msg.toLowerCase().includes('resource-exhausted');
-      if (isQuota && !isQuotaExceeded) {
-        setIsQuotaExceeded(true);
-        displayToast('⚠️ Kuota harian Firestore tercapai. Mode Penyimpanan Lokal (Offline) otomatis aktif!', true);
-      }
-    };
     return () => {
-      delete (window as any).onFirestoreError;
+      unsubscribeAuth();
+      globalFirestoreErrorHandler = null;
     };
-  }, [isQuotaExceeded]);
-
-  // Load local cache as fallback if quota exceeded
-  useEffect(() => {
-    if (isQuotaExceeded && schoolEmail) {
-      addLog("Quota limit exceeded detected. Loading local cache as fallback.");
-      const cachedStudents = localStorage.getItem(`students_${schoolEmail}`);
-      if (cachedStudents) {
-        try {
-          setStudents(JSON.parse(cachedStudents));
-        } catch(e) {}
-      }
-      const cachedHabits = localStorage.getItem(`habitRecords_${schoolEmail}`);
-      if (cachedHabits) {
-        try {
-          setHabitRecords(JSON.parse(cachedHabits));
-        } catch(e) {}
-      }
-      const cachedTeachers = localStorage.getItem(`teachers_${schoolEmail}`);
-      if (cachedTeachers) {
-        try {
-          setTeachersList(JSON.parse(cachedTeachers));
-        } catch(e) {}
-      }
-    }
-  }, [isQuotaExceeded, schoolEmail]);
-
-  // Keep local cache synced when online for maximum robustness
-  useEffect(() => {
-    if (schoolEmail && students.length > 0) {
-      localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(students));
-    }
-  }, [students, schoolEmail]);
-
-  useEffect(() => {
-    if (schoolEmail && habitRecords.length > 0) {
-      localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(habitRecords));
-    }
-  }, [habitRecords, schoolEmail]);
-
-  useEffect(() => {
-    if (schoolEmail && teachersList.length > 0) {
-      localStorage.setItem(`teachers_${schoolEmail}`, JSON.stringify(teachersList));
-    }
-  }, [teachersList, schoolEmail]);
-
-  useEffect(() => {
-    if (isOwner && approvedSchoolsList.length > 0) {
-      localStorage.setItem('approvedSchoolsList', JSON.stringify(approvedSchoolsList));
-    }
-  }, [approvedSchoolsList, isOwner]);
+  }, []);
 
   useEffect(() => {
     if (schoolEmail && (isSharedMode || (isFirebaseAuthenticated && isApproved))) {
       const studentsRef = collection(db, 'students');
-      const qStudents = query(studentsRef, where('schoolEmail', '==', schoolEmail), limit(500));
+      const qStudents = query(studentsRef, where('schoolEmail', '==', schoolEmail));
       const unsubscribeStudents = onSnapshot(qStudents, (snapshot) => {
         const studentsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Student));
         setStudents(studentsData);
@@ -781,7 +693,7 @@ function AppContent() {
       });
 
       const habitsRef = collection(db, 'habitRecords');
-      const qHabits = query(habitsRef, where('schoolEmail', '==', schoolEmail), limit(500));
+      const qHabits = query(habitsRef, where('schoolEmail', '==', schoolEmail));
       const unsubscribeHabits = onSnapshot(qHabits, (snapshot) => {
         const habitsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as HabitRecord));
         setHabitRecords(habitsData);
@@ -1017,25 +929,6 @@ function AppContent() {
     const score = calculateScore(data);
     const finalData = { ...data, total_score: score, category: getCategory(score), schoolEmail };
 
-    if (isQuotaExceeded) {
-      const newRecordObj: HabitRecord = {
-        id: 'local_' + Date.now(),
-        ...finalData
-      };
-      const updatedRecords = [...habitRecords, newRecordObj];
-      setHabitRecords(updatedRecords);
-      localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
-      displayToast('✅ [Lokal] Data berhasil disimpan!');
-      (e.target as HTMLFormElement).reset();
-      setSelectedClass('');
-      setSelectedStudent('');
-      setIsNonMuslimForm(false);
-      if (isSharedMode) {
-        setFormSubmitted(true);
-      }
-      return;
-    }
-
     try {
       await addDoc(collection(db, 'habitRecords'), finalData);
       displayToast('✅ Data berhasil disimpan!');
@@ -1047,22 +940,8 @@ function AppContent() {
         setFormSubmitted(true);
       }
     } catch (error) {
-      const newRecordObj: HabitRecord = {
-        id: 'local_' + Date.now(),
-        ...finalData
-      };
-      const updatedRecords = [...habitRecords, newRecordObj];
-      setHabitRecords(updatedRecords);
-      localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
-      setIsQuotaExceeded(true);
-      displayToast('✅ [Lokal] Data berhasil disimpan (Mode Cadangan)!');
-      (e.target as HTMLFormElement).reset();
-      setSelectedClass('');
-      setSelectedStudent('');
-      setIsNonMuslimForm(false);
-      if (isSharedMode) {
-        setFormSubmitted(true);
-      }
+      displayToast('Gagal menyimpan data.', true);
+      console.error(error);
     }
   };
 
@@ -1086,54 +965,22 @@ function AppContent() {
       return;
     }
 
-    const newStudentObj: Student = {
-      id: 'local_' + Date.now(),
-      student_name: studentName,
-      class: studentClass,
-      schoolEmail
-    };
-
-    if (isQuotaExceeded) {
-      const updatedStudents = [...students, newStudentObj];
-      setStudents(updatedStudents);
-      localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
-      displayToast('✅ [Lokal] Siswa berhasil ditambahkan!');
-      (e.target as HTMLFormElement).reset();
-      return;
-    }
-
     try {
       await addDoc(collection(db, 'students'), { student_name: studentName, class: studentClass, schoolEmail });
       displayToast('✅ Siswa berhasil ditambahkan!');
       (e.target as HTMLFormElement).reset();
     } catch (error) {
-      const updatedStudents = [...students, newStudentObj];
-      setStudents(updatedStudents);
-      localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
-      setIsQuotaExceeded(true);
-      displayToast('✅ [Lokal] Siswa berhasil ditambahkan (Mode Cadangan)!');
-      (e.target as HTMLFormElement).reset();
+      displayToast('Gagal menambahkan siswa.', true);
     }
   };
 
   const handleDeleteStudent = async (student: Student) => {
     if (window.confirm(`Apakah Anda yakin ingin menghapus siswa "${student.student_name}"? Data rekap harian siswa ini tidak akan terhapus secara otomatis, namun siswa tidak akan muncul lagi di daftar isian.`)) {
-      if (isQuotaExceeded) {
-        const updatedStudents = students.filter(s => s.id !== student.id);
-        setStudents(updatedStudents);
-        localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
-        displayToast('✅ [Lokal] Siswa berhasil dihapus!');
-        return;
-      }
       try {
         await deleteDoc(doc(db, 'students', student.id));
         displayToast('✅ Siswa berhasil dihapus!');
       } catch (error) {
-        const updatedStudents = students.filter(s => s.id !== student.id);
-        setStudents(updatedStudents);
-        localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
-        setIsQuotaExceeded(true);
-        displayToast('✅ [Lokal] Siswa berhasil dihapus (Mode Cadangan)!');
+        displayToast('Gagal menghapus siswa.', true);
       }
     }
   };
@@ -1145,39 +992,19 @@ function AppContent() {
       return;
     }
 
-    if (isQuotaExceeded) {
-      const updatedStudents = students.filter(s => s.class !== className);
-      setStudents(updatedStudents);
-      localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
-      displayToast(`✅ [Lokal] Seluruh siswa di ${className} berhasil dihapus!`);
-      setConfirmDeleteClass(null);
-      return;
-    }
-
     try {
       const deletePromises = classStudents.map(student => deleteDoc(doc(db, 'students', student.id)));
       await Promise.all(deletePromises);
       displayToast(`✅ Seluruh siswa di ${className} berhasil dihapus!`);
       setConfirmDeleteClass(null);
     } catch (error) {
-      const updatedStudents = students.filter(s => s.class !== className);
-      setStudents(updatedStudents);
-      localStorage.setItem(`students_${schoolEmail}`, JSON.stringify(updatedStudents));
-      setIsQuotaExceeded(true);
-      displayToast(`✅ [Lokal] Seluruh siswa di ${className} berhasil dihapus (Mode Cadangan)!`);
-      setConfirmDeleteClass(null);
+      displayToast('Gagal menghapus semua siswa di kelas ini.', true);
+      console.error(error);
     }
   };
 
   const handleDeleteAllStudentData = async (student: Student) => {
     if (window.confirm(`Apakah Anda yakin ingin menghapus SELURUH data rekap harian untuk "${student.student_name}"? Tindakan ini tidak dapat dibatalkan.`)) {
-      if (isQuotaExceeded) {
-        const updatedRecords = habitRecords.filter(r => !(r.student_name === student.student_name && r.class === student.class));
-        setHabitRecords(updatedRecords);
-        localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
-        displayToast(`✅ [Lokal] Seluruh data rekap ${student.student_name} berhasil dihapus!`);
-        return;
-      }
       try {
         const q = query(
           collection(db, 'habitRecords'),
@@ -1195,33 +1022,18 @@ function AppContent() {
         await Promise.all(deletePromises);
         displayToast(`✅ Seluruh data rekap ${student.student_name} berhasil dihapus!`);
       } catch (error) {
-        const updatedRecords = habitRecords.filter(r => !(r.student_name === student.student_name && r.class === student.class));
-        setHabitRecords(updatedRecords);
-        localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
-        setIsQuotaExceeded(true);
-        displayToast(`✅ [Lokal] Seluruh data rekap ${student.student_name} berhasil dihapus (Mode Cadangan)!`);
+        displayToast('Gagal menghapus data rekap.', true);
       }
     }
   };
 
   const handleDeleteHabitRecord = async (id: string) => {
     if (window.confirm('Apakah Anda yakin ingin menghapus data rekap ini?')) {
-      if (isQuotaExceeded) {
-        const updatedRecords = habitRecords.filter(r => r.id !== id);
-        setHabitRecords(updatedRecords);
-        localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
-        displayToast('✅ [Lokal] Data rekap berhasil dihapus!');
-        return;
-      }
       try {
         await deleteDoc(doc(db, 'habitRecords', id));
         displayToast('✅ Data rekap berhasil dihapus!');
       } catch (error) {
-        const updatedRecords = habitRecords.filter(r => r.id !== id);
-        setHabitRecords(updatedRecords);
-        localStorage.setItem(`habitRecords_${schoolEmail}`, JSON.stringify(updatedRecords));
-        setIsQuotaExceeded(true);
-        displayToast('✅ [Lokal] Data rekap berhasil dihapus (Mode Cadangan)!');
+        displayToast('Gagal menghapus data rekap.', true);
       }
     }
   };
@@ -1523,7 +1335,7 @@ function AppContent() {
           </div>
 
           <div className="card-habit bg-green-100 p-6 rounded-2xl shadow-md">
-            <input type="hidden" name="worship-type" value={isNonMuslimForm ? 'non-islam' : 'islam'} readOnly />
+            <input type="hidden" name="worship-type" value={isNonMuslimForm ? 'non-islam' : 'islam'} />
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
               <div className="flex items-center">
                 <span className="text-4xl mr-3">{isNonMuslimForm ? '⛪' : '🕌'}</span>
@@ -1736,69 +1548,6 @@ function AppContent() {
     );
   };
 
-  const getWorshipSummary = (r: any) => {
-    if (r.is_non_muslim) {
-      const items = [];
-      if (r.non_muslim_pagi) items.push('Pagi');
-      if (r.non_muslim_malam) items.push('Malam');
-      if (r.non_muslim_kitab) items.push('Kitab');
-      if (r.non_muslim_mingguan) items.push('Mingguan');
-      if (r.non_muslim_keluarga) items.push('Kelg');
-      if (r.non_muslim_lainnya) items.push('Lainnya');
-      return items.length > 0 ? `Non-Islam (${items.length}): ${items.join(', ')}` : 'Tidak mengisi';
-    } else {
-      const items = [];
-      if (r.prayer_subuh) items.push('Subuh');
-      if (r.prayer_dhuhur) items.push('Dhuhur');
-      if (r.prayer_ashar) items.push('Ashar');
-      if (r.prayer_maghrib) items.push('Maghrib');
-      if (r.prayer_isya) items.push('Isya');
-      if (r.dta) items.push('DTA');
-      return items.length > 0 ? `Islam (${items.length}): ${items.join(', ')}` : 'Tidak mengisi';
-    }
-  };
-
-  const getAverageTime = (records: any[], field: string) => {
-    const times = records.map(r => r[field]).filter(Boolean);
-    if (times.length === 0) return '-';
-    const totalMinutes = times.reduce((sum, t) => {
-      const parts = t.split(':');
-      if (parts.length < 2) return sum;
-      return sum + (parseInt(parts[0]) * 60 + parseInt(parts[1]));
-    }, 0);
-    const avgMinutes = Math.round(totalMinutes / times.length);
-    const hh = String(Math.floor(avgMinutes / 60)).padStart(2, '0');
-    const mm = String(avgMinutes % 60).padStart(2, '0');
-    return `${hh}:${mm}`;
-  };
-
-  const getAverageWorshipPercentage = (records: any[]) => {
-    if (records.length === 0) return 0;
-    let totalChecked = 0;
-    records.forEach(r => {
-      if (r.is_non_muslim) {
-        totalChecked += [
-          r.non_muslim_pagi,
-          r.non_muslim_malam,
-          r.non_muslim_kitab,
-          r.non_muslim_mingguan,
-          r.non_muslim_keluarga,
-          r.non_muslim_lainnya
-        ].filter(Boolean).length;
-      } else {
-        totalChecked += [
-          r.prayer_subuh,
-          r.prayer_dhuhur,
-          r.prayer_ashar,
-          r.prayer_maghrib,
-          r.prayer_isya,
-          r.dta
-        ].filter(Boolean).length;
-      }
-    });
-    return Math.round((totalChecked / (records.length * 6)) * 100);
-  };
-
   const renderDailyReportPage = () => {
     const filteredRecords = habitRecords.filter(record => {
       if (selectedReportClass && !isClassMatch(record.class, selectedReportClass)) return false;
@@ -1824,57 +1573,25 @@ function AppContent() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
+          <table className="w-full border-collapse">
             <thead>
               <tr className="bg-blue-500 text-white">
                 <th className="p-3 border">Nama</th>
                 <th className="p-3 border">Kelas</th>
-                <th className="p-3 border text-center">Tanggal</th>
-                <th className="p-2 border text-center">⏰ Bangun</th>
-                <th className="p-2 border">🙏 Beribadah</th>
-                <th className="p-2 border">⚽ Olahraga</th>
-                <th className="p-2 border">🥗 Makan</th>
-                <th className="p-2 border text-center">📚 Belajar</th>
-                <th className="p-2 border">🤝 Bersosialisasi</th>
-                <th className="p-2 border text-center">🌙 Tidur</th>
-                <th className="p-3 border text-center">Skor %</th>
-                <th className="p-3 border text-center">Kategori</th>
-                <th className="p-3 border text-center">Aksi</th>
+                <th className="p-3 border">Tanggal</th>
+                <th className="p-3 border">Skor %</th>
+                <th className="p-3 border">Kategori</th>
+                <th className="p-3 border">Aksi</th>
               </tr>
             </thead>
             <tbody>
               {filteredRecords.map(record => (
                 <tr key={record.id} className="hover:bg-gray-50">
-                  <td className="p-3 border font-semibold">{record.student_name}</td>
+                  <td className="p-3 border">{record.student_name}</td>
                   <td className="p-3 border text-center">{record.class}</td>
-                  <td className="p-3 border text-center whitespace-nowrap">{record.date}</td>
-                  <td className="p-2 border text-center text-xs font-bold text-yellow-700 bg-yellow-50">{record.wake_time || '-'}</td>
-                  <td className="p-2 border text-xs bg-green-50">
-                    <span className="font-semibold block">{record.is_non_muslim ? '⛪ Selain Islam' : '🕌 Islam'}</span>
-                    <span className="text-gray-600 block text-[10px] leading-tight">{getWorshipSummary(record).split(': ')[1] || '-'}</span>
-                  </td>
-                  <td className="p-2 border text-xs bg-blue-50">
-                    <span className="font-semibold block">{record.exercise ? '⚽ Ya' : '❌ Tidak'}</span>
-                    {record.exercise && <span className="text-gray-600 block text-[10px] leading-tight truncate max-w-[120px]">{record.exercise_type || '-'}</span>}
-                  </td>
-                  <td className="p-2 border text-xs bg-orange-50">
-                    <span className="font-semibold block">{record.healthy_food ? '🥗 Ya' : '❌ Tidak'}</span>
-                    {record.healthy_food && <span className="text-gray-600 block text-[10px] leading-tight truncate max-w-[120px]">{record.food_menu || '-'}</span>}
-                  </td>
-                  <td className="p-2 border text-center text-xs font-semibold text-purple-700 bg-purple-50">{record.study_duration ? `${record.study_duration} mnt` : '0 mnt'}</td>
-                  <td className="p-2 border text-xs bg-pink-50 max-w-[150px] truncate" title={record.social_activity || '-'}>{record.social_activity || '-'}</td>
-                  <td className="p-2 border text-center text-xs font-bold text-indigo-700 bg-indigo-50">{record.sleep_time || '-'}</td>
-                  <td className="p-3 border text-center font-bold text-blue-600">{record.total_score}%</td>
-                  <td className="p-3 border text-center">
-                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                      record.category === 'Sangat Baik' ? 'bg-green-100 text-green-800' :
-                      record.category === 'Baik' ? 'bg-blue-100 text-blue-800' :
-                      record.category === 'Mulai Berkembang' ? 'bg-yellow-100 text-yellow-800' :
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {record.category}
-                    </span>
-                  </td>
+                  <td className="p-3 border text-center">{record.date}</td>
+                  <td className="p-3 border text-center font-bold">{record.total_score}%</td>
+                  <td className="p-3 border text-center">{record.category}</td>
                   <td className="p-3 border text-center">
                     <button onClick={() => handleDeleteHabitRecord(record.id)} className="bg-red-100 hover:bg-red-200 text-red-600 p-2 rounded-lg transition-colors" title="Hapus Data">
                       🗑️
@@ -1884,7 +1601,7 @@ function AppContent() {
               ))}
               {filteredRecords.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="p-6 text-center text-gray-500">Tidak ada data.</td>
+                  <td colSpan={5} className="p-6 text-center text-gray-500">Tidak ada data.</td>
                 </tr>
               )}
             </tbody>
@@ -1914,8 +1631,7 @@ function AppContent() {
         ...student,
         averageScore,
         category: getCategory(averageScore),
-        daysFilled: studentRecords.length,
-        records: studentRecords
+        daysFilled: studentRecords.length
       };
     }).filter(Boolean);
 
@@ -1994,66 +1710,28 @@ function AppContent() {
         )}
 
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
+          <table className="w-full border-collapse">
             <thead>
               <tr className="bg-yellow-500 text-white">
                 <th className="p-3 border">Nama</th>
                 <th className="p-3 border">Kelas</th>
-                <th className="p-3 border text-center">Hari Mengisi</th>
-                <th className="p-2 border text-center">⏰ Rata Bangun</th>
-                <th className="p-2 border text-center">🙏 Skor Ibadah</th>
-                <th className="p-2 border text-center">⚽ Rutin Olahraga</th>
-                <th className="p-2 border text-center">🥗 Makan Sehat</th>
-                <th className="p-2 border text-center">📚 Rata Belajar</th>
-                <th className="p-2 border text-center">🤝 Aktif Sosial</th>
-                <th className="p-2 border text-center">🌙 Rata Tidur</th>
-                <th className="p-3 border text-center">Rata Skor %</th>
-                <th className="p-3 border text-center">Kategori</th>
+                <th className="p-3 border">Hari Mengisi</th>
+                <th className="p-3 border">Rata-rata Skor %</th>
+                <th className="p-3 border">Kategori</th>
               </tr>
             </thead>
             <tbody>
               {studentAverages.length > 0 ? studentAverages.map((student: any) => (
                 <tr key={student.id} className="hover:bg-gray-50">
-                  <td className="p-3 border font-semibold">{student.student_name}</td>
+                  <td className="p-3 border">{student.student_name}</td>
                   <td className="p-3 border text-center">{student.class}</td>
                   <td className="p-3 border text-center">{student.daysFilled} hari</td>
-                  {(() => {
-                    const recs = student.records || [];
-                    const avgWake = getAverageTime(recs, 'wake_time');
-                    const avgWorship = getAverageWorshipPercentage(recs);
-                    const exercisePct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.exercise).length / recs.length) * 100) : 0;
-                    const foodPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.healthy_food).length / recs.length) * 100) : 0;
-                    const avgStudy = recs.length > 0 ? Math.round(recs.reduce((sum: number, r: any) => sum + (parseInt(r.study_duration) || 0), 0) / recs.length) : 0;
-                    const socialPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.social_activity && r.social_activity !== '-').length / recs.length) * 100) : 0;
-                    const avgSleep = getAverageTime(recs, 'sleep_time');
-
-                    return (
-                      <>
-                        <td className="p-2 border text-center text-xs font-bold text-yellow-700 bg-yellow-50">{avgWake}</td>
-                        <td className="p-2 border text-center text-xs font-bold text-green-700 bg-green-50">{avgWorship}%</td>
-                        <td className="p-2 border text-center text-xs font-bold text-blue-700 bg-blue-50">{exercisePct}%</td>
-                        <td className="p-2 border text-center text-xs font-bold text-orange-700 bg-orange-50">{foodPct}%</td>
-                        <td className="p-2 border text-center text-xs font-bold text-purple-700 bg-purple-50">{avgStudy} mnt</td>
-                        <td className="p-2 border text-center text-xs font-bold text-pink-700 bg-pink-50">{socialPct}%</td>
-                        <td className="p-2 border text-center text-xs font-bold text-indigo-700 bg-indigo-50">{avgSleep}</td>
-                      </>
-                    );
-                  })()}
-                  <td className="p-3 border text-center font-bold text-yellow-600 bg-yellow-50/50">{student.averageScore}%</td>
-                  <td className="p-3 border text-center">
-                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                      student.category === 'Sangat Baik' ? 'bg-green-100 text-green-800' :
-                      student.category === 'Baik' ? 'bg-blue-100 text-blue-800' :
-                      student.category === 'Mulai Berkembang' ? 'bg-yellow-100 text-yellow-800' :
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {student.category}
-                    </span>
-                  </td>
+                  <td className="p-3 border text-center font-bold">{student.averageScore}%</td>
+                  <td className="p-3 border text-center">{student.category}</td>
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={12} className="p-6 text-center text-gray-500">Tidak ada data untuk bulan ini.</td>
+                  <td colSpan={5} className="p-6 text-center text-gray-500">Tidak ada data untuk bulan ini.</td>
                 </tr>
               )}
             </tbody>
@@ -2085,8 +1763,7 @@ function AppContent() {
         ...student,
         averageScore,
         category: getCategory(averageScore),
-        daysFilled: studentRecords.length,
-        records: studentRecords
+        daysFilled: studentRecords.length
       };
     }).filter(Boolean);
 
@@ -2253,66 +1930,28 @@ function AppContent() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
+          <table className="w-full border-collapse">
             <thead>
               <tr className="bg-purple-500 text-white">
                 <th className="p-3 border">Nama</th>
                 <th className="p-3 border">Kelas</th>
-                <th className="p-3 border text-center">Hari Mengisi</th>
-                <th className="p-2 border text-center">⏰ Rata Bangun</th>
-                <th className="p-2 border text-center">🙏 Skor Ibadah</th>
-                <th className="p-2 border text-center">⚽ Rutin Olahraga</th>
-                <th className="p-2 border text-center">🥗 Makan Sehat</th>
-                <th className="p-2 border text-center">📚 Rata Belajar</th>
-                <th className="p-2 border text-center">🤝 Aktif Sosial</th>
-                <th className="p-2 border text-center">🌙 Rata Tidur</th>
-                <th className="p-3 border text-center">Rata Skor %</th>
-                <th className="p-3 border text-center">Kategori</th>
+                <th className="p-3 border">Hari Mengisi</th>
+                <th className="p-3 border">Rata-rata Skor %</th>
+                <th className="p-3 border">Kategori</th>
               </tr>
             </thead>
             <tbody>
               {studentAverages.length > 0 ? studentAverages.map((student: any) => (
                 <tr key={student.id} className="hover:bg-gray-50">
-                  <td className="p-3 border font-semibold">{student.student_name}</td>
+                  <td className="p-3 border">{student.student_name}</td>
                   <td className="p-3 border text-center">{student.class}</td>
                   <td className="p-3 border text-center">{student.daysFilled} hari</td>
-                  {(() => {
-                    const recs = student.records || [];
-                    const avgWake = getAverageTime(recs, 'wake_time');
-                    const avgWorship = getAverageWorshipPercentage(recs);
-                    const exercisePct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.exercise).length / recs.length) * 100) : 0;
-                    const foodPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.healthy_food).length / recs.length) * 100) : 0;
-                    const avgStudy = recs.length > 0 ? Math.round(recs.reduce((sum: number, r: any) => sum + (parseInt(r.study_duration) || 0), 0) / recs.length) : 0;
-                    const socialPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.social_activity && r.social_activity !== '-').length / recs.length) * 100) : 0;
-                    const avgSleep = getAverageTime(recs, 'sleep_time');
-
-                    return (
-                      <>
-                        <td className="p-2 border text-center text-xs font-bold text-yellow-700 bg-yellow-50">{avgWake}</td>
-                        <td className="p-2 border text-center text-xs font-bold text-green-700 bg-green-50">{avgWorship}%</td>
-                        <td className="p-2 border text-center text-xs font-bold text-blue-700 bg-blue-50">{exercisePct}%</td>
-                        <td className="p-2 border text-center text-xs font-bold text-orange-700 bg-orange-50">{foodPct}%</td>
-                        <td className="p-2 border text-center text-xs font-bold text-purple-700 bg-purple-50">{avgStudy} mnt</td>
-                        <td className="p-2 border text-center text-xs font-bold text-pink-700 bg-pink-50">{socialPct}%</td>
-                        <td className="p-2 border text-center text-xs font-bold text-indigo-700 bg-indigo-50">{avgSleep}</td>
-                      </>
-                    );
-                  })()}
-                  <td className="p-3 border text-center font-bold text-purple-600 bg-purple-50/50">{student.averageScore}%</td>
-                  <td className="p-3 border text-center">
-                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                      student.category === 'Sangat Baik' ? 'bg-green-100 text-green-800' :
-                      student.category === 'Baik' ? 'bg-blue-100 text-blue-800' :
-                      student.category === 'Mulai Berkembang' ? 'bg-yellow-100 text-yellow-800' :
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {student.category}
-                    </span>
-                  </td>
+                  <td className="p-3 border text-center font-bold">{student.averageScore}%</td>
+                  <td className="p-3 border text-center">{student.category}</td>
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={12} className="p-6 text-center text-gray-500">Tidak ada data untuk semester ini.</td>
+                  <td colSpan={5} className="p-6 text-center text-gray-500">Tidak ada data untuk semester ini.</td>
                 </tr>
               )}
             </tbody>
@@ -2355,51 +1994,26 @@ function AppContent() {
                   </div>
                 </div>
 
-                 <table className="w-full border-collapse border border-black text-sm">
+                <table className="w-full border-collapse border border-black text-sm">
                   <thead>
                     <tr className="bg-gray-100">
                       <th className="border border-black p-2 text-center w-10">No</th>
                       <th className="border border-black p-2">Nama Siswa</th>
                       <th className="border border-black p-2 text-center">Kelas</th>
-                      <th className="border border-black p-2 text-center">⏰ Bangun</th>
-                      <th className="border border-black p-2 text-center">🙏 Ibadah</th>
-                      <th className="border border-black p-2 text-center">⚽ Olahraga</th>
-                      <th className="border border-black p-2 text-center">🥗 Makan</th>
-                      <th className="border border-black p-2 text-center">📚 Belajar</th>
-                      <th className="border border-black p-2 text-center">🤝 Sosial</th>
-                      <th className="border border-black p-2 text-center">🌙 Tidur</th>
                       <th className="border border-black p-2 text-center">Skor (%)</th>
-                      <th className="border border-black p-2 text-center">Kategori</th>
+                      <th className="border border-black p-2">Kategori</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {studentAverages.map((student: any, index: number) => {
-                      const recs = student.records || [];
-                      const avgWake = getAverageTime(recs, 'wake_time');
-                      const avgWorship = getAverageWorshipPercentage(recs);
-                      const exercisePct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.exercise).length / recs.length) * 100) : 0;
-                      const foodPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.healthy_food).length / recs.length) * 100) : 0;
-                      const avgStudy = recs.length > 0 ? Math.round(recs.reduce((sum: number, r: any) => sum + (parseInt(r.study_duration) || 0), 0) / recs.length) : 0;
-                      const socialPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.social_activity && r.social_activity !== '-').length / recs.length) * 100) : 0;
-                      const avgSleep = getAverageTime(recs, 'sleep_time');
-
-                      return (
-                        <tr key={student.id}>
-                          <td className="border border-black p-2 text-center">{index + 1}</td>
-                          <td className="border border-black p-2 font-bold">{student.student_name}</td>
-                          <td className="border border-black p-2 text-center">{student.class}</td>
-                          <td className="border border-black p-2 text-center">{avgWake}</td>
-                          <td className="border border-black p-2 text-center">{avgWorship}%</td>
-                          <td className="border border-black p-2 text-center">{exercisePct}%</td>
-                          <td className="border border-black p-2 text-center">{foodPct}%</td>
-                          <td className="border border-black p-2 text-center">{avgStudy} mnt</td>
-                          <td className="border border-black p-2 text-center">{socialPct}%</td>
-                          <td className="border border-black p-2 text-center">{avgSleep}</td>
-                          <td className="border border-black p-2 text-center font-bold">{student.averageScore}%</td>
-                          <td className="border border-black p-2 text-center">{student.category}</td>
-                        </tr>
-                      );
-                    })}
+                    {studentAverages.map((student: any, index: number) => (
+                      <tr key={student.id}>
+                        <td className="border border-black p-2 text-center">{index + 1}</td>
+                        <td className="border border-black p-2">{student.student_name}</td>
+                        <td className="border border-black p-2 text-center">{student.class}</td>
+                        <td className="border border-black p-2 text-center font-bold">{student.averageScore}%</td>
+                        <td className="border border-black p-2">{student.category}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
 
@@ -2495,6 +2109,71 @@ function AppContent() {
     </div>
   );
 
+  if (quotaError && !isDemo) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center p-4 font-sans text-gray-800">
+        <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-lg w-full text-center border-4 border-amber-100 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-amber-500 to-orange-500"></div>
+          
+          <div className="w-20 h-20 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
+            <Zap className="w-10 h-10 animate-pulse" />
+          </div>
+          
+          <h1 className="text-3xl font-extrabold text-gray-900 mb-3 tracking-tight">Batas Kuota Harian Terlampaui</h1>
+          <div className="mb-6">
+            <p className="text-amber-700 font-semibold px-4 bg-amber-50 py-2 rounded-xl inline-block text-sm">
+              ⚠️ Kuota Firestore Spark Plan Habis
+            </p>
+          </div>
+          
+          <div className="text-left text-gray-600 space-y-4 mb-8 text-sm leading-relaxed">
+            <p>
+              Halo <b>{auth.currentUser?.displayName || auth.currentUser?.email || 'Pengguna'}</b>, aplikasi <b>SIMO-G7KAIH</b> saat ini sedang mengalami pembatasan karena pembacaan data harian gratis (50.000 limit) dari Google Firebase telah habis.
+            </p>
+            <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 space-y-2">
+              <p className="font-bold text-gray-800 flex items-center gap-1.5">
+                <Info className="w-4 h-4 text-purple-600" /> Informasi Penting:
+              </p>
+              <ul className="list-disc list-inside space-y-1 text-gray-500 pl-1">
+                <li>Data Anda (Siswa, Guru, Rekap Harian) <b>tetap aman dan tidak hilang</b>.</li>
+                <li>Kuota akan otomatis direset kembali ke nol oleh Firebase besok siang sekitar pukul <b>14.00 - 15.00 WIB</b>.</li>
+                <li>Setelah direset, aplikasi akan berfungsi kembali seperti biasa secara otomatis.</li>
+              </ul>
+            </div>
+            <p className="text-xs text-gray-400">
+              Jika ini adalah domain sekolah aktif dengan banyak siswa, kami sangat menyarankan untuk meng-upgrade database Firebase Anda ke paket bayar-sesuai-pemakaian (Blaze Plan) agar tidak terhambat oleh batas harian.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <button 
+              onClick={handleEnterDemo}
+              className="w-full bg-purple-600 hover:bg-purple-700 text-white py-4 rounded-xl text-lg font-bold shadow-xl shadow-purple-100 transition-all transform hover:-translate-y-0.5 flex items-center justify-center gap-2"
+            >
+              <PlayCircle className="w-5 h-5" /> Masuk ke Mode Demo (Uji Coba)
+            </button>
+            
+            <a 
+              href="https://console.firebase.google.com/project/gen-lang-client-0172692882/firestore/databases/ai-studio-c4c93937-5628-414f-b345-4021d4a11b71/data?openUpgradeDialog=true" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="block w-full bg-white border-2 border-amber-300 text-amber-700 hover:bg-amber-50 py-3.5 rounded-xl text-md font-bold transition-all flex items-center justify-center gap-2"
+            >
+              <Settings className="w-4 h-4" /> Buka Firebase Console (Upgrade)
+            </a>
+
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl text-sm font-bold transition-all"
+            >
+              🔄 Refresh Halaman
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (currentPage === 'landing' && !isSharedMode && !isFirebaseAuthenticated) {
     return renderLandingPage();
   }
@@ -2569,22 +2248,6 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-500 to-purple-600 p-4 font-sans">
       <div className="max-w-6xl mx-auto">
-        {isQuotaExceeded && !isQuotaBannerDismissed && (
-          <div className="bg-amber-500 text-white p-4 rounded-2xl mb-6 shadow-lg flex items-start gap-3 border border-amber-400 print:hidden relative pr-12">
-            <span className="text-2xl">⚠️</span>
-            <div>
-              <p className="font-bold text-sm">Mode Cadangan Aktif (Kuota Harian Tercapai)</p>
-              <p className="text-xs opacity-95 mt-0.5">Layanan cloud Google Firebase sedang membatasi lalu lintas data gratis harian. Aplikasi SIMO-G7KAIH secara otomatis mengaktifkan penyimpanan cadangan lokal (Offline Mode) agar Anda dan siswa tetap dapat mengisi formulir, menambah siswa, dan melakukan rekapitulasi data secara penuh tanpa kehilangan progres!</p>
-            </div>
-            <button 
-              onClick={() => setIsQuotaBannerDismissed(true)}
-              className="absolute top-3.5 right-3.5 text-white/80 hover:text-white hover:bg-white/15 p-1 rounded-full transition-all"
-              title="Tutup Peringatan"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        )}
         {/* App Bar / Back Button for Sub-pages */}
         {!isSharedMode && currentPage !== 'home' && (
           <div className="flex justify-between items-center mb-6 print:hidden">
