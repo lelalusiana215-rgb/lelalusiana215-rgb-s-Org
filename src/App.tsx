@@ -275,6 +275,7 @@ function AppContent() {
   const [selectedStudent, setSelectedStudent] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [formSubmitted, setFormSubmitted] = useState(false);
+  const [isExited, setIsExited] = useState(false);
 
   const getActiveClasses = () => {
     const studentClasses = students.map(s => s.class).filter(Boolean);
@@ -1400,15 +1401,43 @@ function AppContent() {
   );
 
   const renderFormPage = () => {
+    if (isExited && isSharedMode) {
+      return (
+        <div className="bg-white rounded-3xl shadow-2xl p-8 text-center max-w-md mx-auto">
+          <div className="text-6xl mb-4">👋</div>
+          <h2 className="text-3xl font-bold text-purple-700 mb-4">Sampai Jumpa!</h2>
+          <p className="text-lg text-gray-600 mb-8 leading-relaxed">
+            Anda telah aman keluar dari Formulir SIMO-G7KAIH. 
+            <br />
+            <span className="font-semibold text-purple-600 mt-2 block">Tetap semangat membangun 7 Kebiasaan Anak Indonesia Hebat!</span>
+          </p>
+          <button 
+            onClick={() => setIsExited(false)} 
+            className="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 px-8 rounded-xl font-bold transition-colors shadow-md"
+          >
+            Masuk Kembali ke Form
+          </button>
+        </div>
+      );
+    }
+
     if (formSubmitted && isSharedMode) {
       return (
-        <div className="bg-white rounded-3xl shadow-2xl p-8 text-center">
+        <div className="bg-white rounded-3xl shadow-2xl p-8 text-center max-w-md mx-auto">
           <div className="text-6xl mb-4">🎉</div>
           <h2 className="text-3xl font-bold text-green-600 mb-4">Terima Kasih!</h2>
           <p className="text-xl text-gray-600 mb-8">Data kebiasaan harian berhasil disimpan.</p>
-          <button onClick={() => setFormSubmitted(false)} className="bg-purple-500 hover:bg-purple-600 text-white py-3 px-8 rounded-xl font-bold">
-            Isi Form Lagi
-          </button>
+          <div className="flex flex-col gap-3">
+            <button onClick={() => setFormSubmitted(false)} className="w-full bg-purple-500 hover:bg-purple-600 text-white py-3 rounded-xl font-bold transition-colors">
+              Isi Form Lagi
+            </button>
+            <button 
+              onClick={() => setIsExited(true)} 
+              className="w-full bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 py-3 rounded-xl font-bold text-sm transition-colors"
+            >
+              🚪 Keluar / Tutup Form
+            </button>
+          </div>
         </div>
       );
     }
@@ -1418,11 +1447,25 @@ function AppContent() {
 
     return (
       <div className="bg-white rounded-3xl shadow-2xl p-8">
-        {!isSharedMode && (
-          <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl">
-            ← Kembali ke Beranda
-          </button>
-        )}
+        <div className="flex justify-between items-center mb-6">
+          {!isSharedMode ? (
+            <button onClick={() => setCurrentPage('home')} className="bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl text-sm font-bold">
+              ← Kembali ke Beranda
+            </button>
+          ) : (
+            <button 
+              type="button"
+              onClick={() => {
+                if (window.confirm("Apakah Anda yakin ingin keluar dari formulir? Isian yang belum disimpan akan hilang.")) {
+                  setIsExited(true);
+                }
+              }} 
+              className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 py-2 px-4 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 ml-auto cursor-pointer"
+            >
+              🚪 Keluar Formulir
+            </button>
+          )}
+        </div>
         <div className="text-center mb-6">
           <h2 className="text-3xl font-bold text-purple-700">Form Isian Siswa</h2>
           <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs text-gray-500">
