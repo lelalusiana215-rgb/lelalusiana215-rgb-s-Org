@@ -246,6 +246,9 @@ function AppContent() {
   const [teacherName, setTeacherName] = useState('Nama Guru Kelas, S.Pd.');
   const [teacherNip, setTeacherNip] = useState('');
   const [showReportPreview, setShowReportPreview] = useState(false);
+  const [chartImageBase64, setChartImageBase64] = useState('');
+  const [showMonthlyReportPreview, setShowMonthlyReportPreview] = useState(false);
+  const [monthlyChartImageBase64, setMonthlyChartImageBase64] = useState('');
 
   const [students, setStudents] = useState<Student[]>([]);
   const [habitRecords, setHabitRecords] = useState<HabitRecord[]>([]);
@@ -2002,14 +2005,107 @@ function AppContent() {
       'Rata-rata Skor': student.averageScore,
     }));
 
+    const handlePrintMonthly = () => {
+      window.print();
+    };
+
+    const handleExportMonthlyWord = () => {
+      const elementId = 'printable-monthly-report';
+      const filename = `Rekap_Bulanan_${selectedReportClass || 'Semua'}_${selectedYear}_M${selectedMonth}`;
+      const preHtml = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Export HTML To Doc</title><style>table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 8px; text-align: left; } .text-center { text-align: center; } .font-bold { font-weight: bold; } .kop { text-align: center; border-bottom: 3px double black; padding-bottom: 10px; margin-bottom: 20px; } .kop h1 { margin: 0; font-size: 20pt; } .kop p { margin: 0; font-size: 10pt; } .signature-table { width: 100%; margin-top: 50px; border: none !important; } .signature-table td { border: none !important; }</style></head><body>";
+      const postHtml = "</body></html>";
+      const content = document.getElementById(elementId)?.innerHTML || '';
+      const html = preHtml + content + postHtml;
+
+      const blob = new Blob(['\ufeff', html], {
+        type: 'application/msword'
+      });
+      
+      const url = URL.createObjectURL(blob);
+      const downloadLink = document.createElement("a");
+      document.body.appendChild(downloadLink);
+      downloadLink.href = url;
+      downloadLink.download = filename + '.doc';
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+      URL.revokeObjectURL(url);
+    };
+
+    const handleShowMonthlyPreview = () => {
+      const svg = document.querySelector('.monthly-chart svg');
+      if (svg) {
+        try {
+          const svgData = new XMLSerializer().serializeToString(svg);
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          const img = new Image();
+          
+          canvas.width = 1200;
+          canvas.height = 600;
+          
+          img.onload = () => {
+            if (ctx) {
+              ctx.fillStyle = 'white';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              const pngUrl = canvas.toDataURL('image/png');
+              setMonthlyChartImageBase64(pngUrl);
+            }
+          };
+          img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+        } catch (e) {
+          console.error("Gagal men-serialize grafik:", e);
+          setMonthlyChartImageBase64('');
+        }
+      } else {
+        setMonthlyChartImageBase64('');
+      }
+      setShowMonthlyReportPreview(true);
+    };
+
     return (
       <div className="bg-white rounded-3xl shadow-2xl p-8">
-        <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl">← Kembali ke Beranda</button>
-        <div className="text-center mb-6">
+        <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl print:hidden">← Kembali ke Beranda</button>
+        <div className="text-center mb-6 print:hidden">
           <h2 className="text-3xl font-bold text-yellow-700">📈 Rekap Bulanan</h2>
         </div>
         
-        <div className="flex flex-wrap gap-4 mb-6 justify-center">
+        <div className="bg-yellow-50 p-6 rounded-2xl mb-8 border-2 border-yellow-100 print:hidden">
+          <h3 className="text-xl font-bold mb-4 text-yellow-800">⚙️ Pengaturan Laporan</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-bold mb-1">Nama Sekolah:</label>
+              <input type="text" value={schoolName} onChange={(e) => setSchoolName(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-500 outline-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">Alamat Sekolah:</label>
+              <input type="text" value={schoolAddress} onChange={(e) => setSchoolAddress(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-500 outline-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">Nama Kepala Sekolah:</label>
+              <input type="text" value={principalName} onChange={(e) => setPrincipalName(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-500 outline-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">NIP Kepala Sekolah (Opsional):</label>
+              <input type="text" value={principalNip} onChange={(e) => setPrincipalNip(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-500 outline-none" placeholder="Contoh: 19800101 200501 1 001" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">Nama Guru Kelas:</label>
+              <input type="text" value={teacherName} onChange={(e) => setTeacherName(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-500 outline-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">NIP Guru Kelas (Opsional):</label>
+              <input type="text" value={teacherNip} onChange={(e) => setTeacherNip(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-yellow-500 outline-none" placeholder="Contoh: 19850202 201001 2 002" />
+            </div>
+          </div>
+          <div className="mt-6 flex flex-wrap gap-4 justify-center">
+            <button onClick={handleShowMonthlyPreview} className="bg-yellow-600 hover:bg-yellow-700 text-white py-3 px-8 rounded-xl font-bold shadow-lg flex items-center gap-2">
+              👁️ Preview Laporan
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-4 mb-6 justify-center print:hidden">
           <select 
             value={selectedReportClass} 
             onChange={(e) => setSelectedReportClass(e.target.value)}
@@ -2051,7 +2147,7 @@ function AppContent() {
                 <h3 className="text-xl font-bold text-center text-yellow-800 mb-6">
                   Grafik Rata-rata Skor Siswa {selectedReportClass}
                 </h3>
-                <div className="h-80 w-full">
+                <div className="h-80 w-full monthly-chart">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" />
@@ -2133,6 +2229,129 @@ function AppContent() {
               </table>
             </div>
           </>
+        )}
+
+        {showMonthlyReportPreview && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[60] p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl max-w-4xl w-full p-8 shadow-2xl relative my-8">
+              <button onClick={() => setShowMonthlyReportPreview(false)} className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl print:hidden">✕</button>
+              
+              <div className="flex gap-4 mb-6 print:hidden">
+                <button onClick={handlePrintMonthly} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                  🖨️ Cetak Laporan
+                </button>
+                <button onClick={handleExportMonthlyWord} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                  📄 Simpan Word (.doc)
+                </button>
+              </div>
+
+              <div id="printable-monthly-report" className="bg-white p-4 text-black font-serif">
+                {/* Kop Sekolah */}
+                <div className="flex items-center border-b-4 border-double border-black pb-4 mb-6">
+                  <div className="flex-1 text-center">
+                    <h1 className="text-2xl font-bold uppercase">{schoolName}</h1>
+                    <p className="text-sm italic">{schoolAddress}</p>
+                  </div>
+                </div>
+
+                <h2 className="text-xl font-bold text-center underline mb-6 uppercase">LAPORAN REKAPITULASI BULANAN</h2>
+                
+                <div className="mb-4 grid grid-cols-2 text-sm">
+                  <div>
+                    <p><b>Kelas:</b> {selectedReportClass || 'Semua Kelas'}</p>
+                    <p><b>Bulan:</b> {new Date(2000, selectedMonth - 1).toLocaleString('id-ID', { month: 'long' })}</p>
+                  </div>
+                  <div className="text-right">
+                    <p><b>Tahun:</b> {selectedYear}</p>
+                    <p><b>Tanggal Cetak:</b> {new Date().toLocaleDateString('id-ID')}</p>
+                  </div>
+                </div>
+
+                <table className="w-full border-collapse border border-black text-sm">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="border border-black p-2 text-center w-10">No</th>
+                      <th className="border border-black p-2">Nama Siswa</th>
+                      <th className="border border-black p-2 text-center">Kelas</th>
+                      <th className="border border-black p-2 text-center">⏰ Bangun</th>
+                      <th className="border border-black p-2 text-center">🙏 Ibadah</th>
+                      <th className="border border-black p-2 text-center">⚽ Olahraga</th>
+                      <th className="border border-black p-2 text-center">🥗 Makan</th>
+                      <th className="border border-black p-2 text-center">📚 Belajar</th>
+                      <th className="border border-black p-2 text-center">🤝 Sosial</th>
+                      <th className="border border-black p-2 text-center">🌙 Tidur</th>
+                      <th className="border border-black p-2 text-center">Skor (%)</th>
+                      <th className="border border-black p-2 text-center">Kategori</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {studentAverages.map((student: any, index: number) => {
+                      const recs = student.records || [];
+                      const avgWake = getAverageTime(recs, 'wake_time');
+                      const avgWorship = getAverageWorshipPercentage(recs);
+                      const exercisePct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.exercise).length / recs.length) * 100) : 0;
+                      const foodPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.healthy_food).length / recs.length) * 100) : 0;
+                      const avgStudy = recs.length > 0 ? Math.round(recs.reduce((sum: number, r: any) => sum + (parseInt(r.study_duration) || 0), 0) / recs.length) : 0;
+                      const socialPct = recs.length > 0 ? Math.round((recs.filter((r: any) => r.social_activity && r.social_activity !== '-').length / recs.length) * 100) : 0;
+                      const avgSleep = getAverageTime(recs, 'sleep_time');
+
+                      return (
+                        <tr key={student.id}>
+                          <td className="border border-black p-2 text-center">{index + 1}</td>
+                          <td className="border border-black p-2 font-bold">{student.student_name}</td>
+                          <td className="border border-black p-2 text-center">{student.class}</td>
+                          <td className="border border-black p-2 text-center">{avgWake}</td>
+                          <td className="border border-black p-2 text-center">{avgWorship}%</td>
+                          <td className="border border-black p-2 text-center">{exercisePct}%</td>
+                          <td className="border border-black p-2 text-center">{foodPct}%</td>
+                          <td className="border border-black p-2 text-center">{avgStudy} mnt</td>
+                          <td className="border border-black p-2 text-center">{socialPct}%</td>
+                          <td className="border border-black p-2 text-center">{avgSleep}</td>
+                          <td className="border border-black p-2 text-center font-bold">{student.averageScore}%</td>
+                          <td className="border border-black p-2 text-center text-xs">{student.category}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                {/* Tanda Tangan */}
+                <div className="mt-12 text-sm grid grid-cols-2 gap-8" style={{ pageBreakInside: 'avoid' }}>
+                  <div className="text-center">
+                    <p>Mengetahui,</p>
+                    <p>Kepala Sekolah</p>
+                    <div className="h-24"></div>
+                    <p className="font-bold underline">{principalName}</p>
+                    {principalNip && <p>NIP. {principalNip}</p>}
+                  </div>
+                  <div className="text-center">
+                    <p>Menyelesaikan Laporan,</p>
+                    <p>Guru Kelas</p>
+                    <div className="h-24"></div>
+                    <p className="font-bold underline">{teacherName}</p>
+                    {teacherNip && <p>NIP. {teacherNip}</p>}
+                  </div>
+                </div>
+
+                {/* Lampiran Grafik Bulanan */}
+                {monthlyChartImageBase64 && (
+                  <div className="mt-16 pt-8 border-t border-gray-300" style={{ pageBreakBefore: 'always' }}>
+                    <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                      <h3 className="text-lg font-bold uppercase underline" style={{ fontFamily: 'serif', color: '#000' }}>LAMPIRAN: GRAFIK KEMAJUAN BULANAN</h3>
+                      <p className="text-xs italic" style={{ color: '#666', marginTop: '5px' }}>SIMO-G7KAIH - Pemantauan Kebiasaan Anak Indonesia Hebat</p>
+                    </div>
+                    <div className="flex justify-center" style={{ display: 'flex', justifyContent: 'center', marginTop: '20px' }}>
+                      <img 
+                        src={monthlyChartImageBase64} 
+                        alt="Grafik Kemajuan Bulanan" 
+                        style={{ maxWidth: '100%', width: '650px', height: 'auto', border: '1px solid #ddd', padding: '8px', backgroundColor: '#fff' }} 
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         )}
       </div>
     );
@@ -2282,6 +2501,38 @@ function AppContent() {
       img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
     };
 
+    const handleShowPreview = () => {
+      const svg = document.querySelector('.semester-chart svg');
+      if (svg) {
+        try {
+          const svgData = new XMLSerializer().serializeToString(svg);
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          const img = new Image();
+          
+          canvas.width = 1200; // high res for print/word
+          canvas.height = 600;
+          
+          img.onload = () => {
+            if (ctx) {
+              ctx.fillStyle = 'white';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              const pngUrl = canvas.toDataURL('image/png');
+              setChartImageBase64(pngUrl);
+            }
+          };
+          img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+        } catch (e) {
+          console.error("Gagal men-serialize grafik:", e);
+          setChartImageBase64('');
+        }
+      } else {
+        setChartImageBase64('');
+      }
+      setShowReportPreview(true);
+    };
+
     return (
       <div className="bg-white rounded-3xl shadow-2xl p-8">
         <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl print:hidden">← Kembali ke Beranda</button>
@@ -2318,7 +2569,7 @@ function AppContent() {
             </div>
           </div>
           <div className="mt-6 flex flex-wrap gap-4 justify-center">
-            <button onClick={() => setShowReportPreview(true)} className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-8 rounded-xl font-bold shadow-lg flex items-center gap-2">
+            <button onClick={handleShowPreview} className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-8 rounded-xl font-bold shadow-lg flex items-center gap-2">
               👁️ Preview Laporan
             </button>
           </div>
@@ -2547,6 +2798,23 @@ function AppContent() {
                     {teacherNip && <p>NIP. {teacherNip}</p>}
                   </div>
                 </div>
+
+                {/* Lampiran Grafik */}
+                {chartImageBase64 && (
+                  <div className="mt-16 pt-8 border-t border-gray-300" style={{ pageBreakBefore: 'always' }}>
+                    <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                      <h3 className="text-lg font-bold uppercase underline" style={{ fontFamily: 'serif', color: '#000' }}>LAMPIRAN: GRAFIK KEMAJUAN SEMESTER</h3>
+                      <p className="text-xs italic" style={{ color: '#666', marginTop: '5px' }}>SIMO-G7KAIH - Pemantauan Kebiasaan Anak Indonesia Hebat</p>
+                    </div>
+                    <div className="flex justify-center" style={{ display: 'flex', justifyContent: 'center', marginTop: '20px' }}>
+                      <img 
+                        src={chartImageBase64} 
+                        alt="Grafik Kemajuan Semester" 
+                        style={{ maxWidth: '100%', width: '650px', height: 'auto', border: '1px solid #ddd', padding: '8px', backgroundColor: '#fff' }} 
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
