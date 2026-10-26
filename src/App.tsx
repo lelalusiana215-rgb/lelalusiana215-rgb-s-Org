@@ -2236,12 +2236,15 @@ function AppContent() {
             <div className="bg-white rounded-2xl max-w-4xl w-full p-8 shadow-2xl relative my-8">
               <button onClick={() => setShowMonthlyReportPreview(false)} className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl print:hidden">✕</button>
               
-              <div className="flex gap-4 mb-6 print:hidden">
+              <div className="flex flex-wrap gap-4 mb-6 print:hidden">
                 <button onClick={handlePrintMonthly} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
                   🖨️ Cetak Laporan
                 </button>
                 <button onClick={handleExportMonthlyWord} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
                   📄 Simpan Word (.doc)
+                </button>
+                <button onClick={() => setShowMonthlyReportPreview(false)} className="bg-gray-500 hover:bg-gray-600 text-white py-3 px-6 rounded-xl font-bold flex items-center justify-center gap-2">
+                  ← Kembali / Tutup
                 </button>
               </div>
 
@@ -2706,12 +2709,15 @@ function AppContent() {
             <div className="bg-white rounded-2xl max-w-4xl w-full p-8 shadow-2xl relative my-8">
               <button onClick={() => setShowReportPreview(false)} className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl print:hidden">✕</button>
               
-              <div className="flex gap-4 mb-6 print:hidden">
+              <div className="flex flex-wrap gap-4 mb-6 print:hidden">
                 <button onClick={handlePrint} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
                   🖨️ Cetak Laporan
                 </button>
                 <button onClick={handleExportWord} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
                   📄 Simpan Word (.doc)
+                </button>
+                <button onClick={() => setShowReportPreview(false)} className="bg-gray-500 hover:bg-gray-600 text-white py-3 px-6 rounded-xl font-bold flex items-center justify-center gap-2">
+                  ← Kembali / Tutup
                 </button>
               </div>
 
