@@ -249,6 +249,7 @@ function AppContent() {
   const [chartImageBase64, setChartImageBase64] = useState('');
   const [showMonthlyReportPreview, setShowMonthlyReportPreview] = useState(false);
   const [monthlyChartImageBase64, setMonthlyChartImageBase64] = useState('');
+  const [showDailyReportPreview, setShowDailyReportPreview] = useState(false);
 
   const [students, setStudents] = useState<Student[]>([]);
   const [habitRecords, setHabitRecords] = useState<HabitRecord[]>([]);
@@ -1818,14 +1819,75 @@ function AppContent() {
       return true;
     });
 
+    const handlePrintDaily = () => {
+      window.print();
+    };
+
+    const handleExportDailyWord = () => {
+      const elementId = 'printable-daily-report';
+      const filename = `Rekap_Harian_${selectedReportClass || 'Semua'}_${dailyReportDate}`;
+      const preHtml = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Export HTML To Doc</title><style>@page { size: 11.0in 8.5in; mso-page-orientation: landscape; } body { margin: 1cm; } table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 8px; text-align: left; } .text-center { text-align: center; } .font-bold { font-weight: bold; } .kop { text-align: center; border-bottom: 3px double black; padding-bottom: 10px; margin-bottom: 20px; } .kop h1 { margin: 0; font-size: 20pt; } .kop p { margin: 0; font-size: 10pt; } .signature-table { width: 100%; margin-top: 50px; border: none !important; } .signature-table td { border: none !important; }</style></head><body>";
+      const postHtml = "</body></html>";
+      const content = document.getElementById(elementId)?.innerHTML || '';
+      const html = preHtml + content + postHtml;
+
+      const blob = new Blob(['\ufeff', html], {
+        type: 'application/msword'
+      });
+      
+      const url = URL.createObjectURL(blob);
+      const downloadLink = document.createElement("a");
+      document.body.appendChild(downloadLink);
+      downloadLink.href = url;
+      downloadLink.download = filename + '.doc';
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+      URL.revokeObjectURL(url);
+    };
+
     return (
       <div className="bg-white rounded-3xl shadow-2xl p-8">
-        <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl">← Kembali ke Beranda</button>
-        <div className="text-center mb-6">
+        <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl print:hidden">← Kembali ke Beranda</button>
+        <div className="text-center mb-6 print:hidden">
           <h2 className="text-3xl font-bold text-blue-700">📊 Rekap Harian</h2>
         </div>
         
-        <div className="flex flex-wrap gap-4 mb-6 justify-center">
+        <div className="bg-blue-50 p-6 rounded-2xl mb-8 border-2 border-blue-100 print:hidden">
+          <h3 className="text-xl font-bold mb-4 text-blue-800">⚙️ Pengaturan Laporan</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-bold mb-1">Nama Sekolah:</label>
+              <input type="text" value={schoolName} onChange={(e) => setSchoolName(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">Alamat Sekolah:</label>
+              <input type="text" value={schoolAddress} onChange={(e) => setSchoolAddress(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">Nama Kepala Sekolah:</label>
+              <input type="text" value={principalName} onChange={(e) => setPrincipalName(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">NIP Kepala Sekolah (Opsional):</label>
+              <input type="text" value={principalNip} onChange={(e) => setPrincipalNip(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Contoh: 19800101 200501 1 001" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">Nama Guru Kelas:</label>
+              <input type="text" value={teacherName} onChange={(e) => setTeacherName(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">NIP Guru Kelas (Opsional):</label>
+              <input type="text" value={teacherNip} onChange={(e) => setTeacherNip(e.target.value)} className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Contoh: 19850202 201001 2 002" />
+            </div>
+          </div>
+          <div className="mt-6 flex flex-wrap gap-4 justify-center">
+            <button onClick={() => setShowDailyReportPreview(true)} className="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold shadow-lg flex items-center gap-2">
+              👁️ Preview Laporan
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-4 mb-6 justify-center print:hidden">
           <div>
             <label className="block text-xs font-bold text-gray-500 mb-1">Tanggal Rekap:</label>
             <input 
@@ -1870,7 +1932,7 @@ function AppContent() {
                 <th className="p-2 border text-center">🌙 Tidur</th>
                 <th className="p-3 border text-center">Skor %</th>
                 <th className="p-3 border text-center">Kategori</th>
-                <th className="p-3 border text-center">Aksi</th>
+                <th className="p-3 border text-center print:hidden">Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -1878,7 +1940,7 @@ function AppContent() {
                 <tr key={record.id} className="hover:bg-gray-50">
                   <td className="p-3 border font-semibold">{record.student_name}</td>
                   <td className="p-3 border text-center">{record.class}</td>
-                  <td className="p-3 border text-center white-space:nowrap">{record.date}</td>
+                  <td className="p-3 border text-center">{record.date}</td>
                   <td className="p-2 border text-center text-xs font-bold text-yellow-700 bg-yellow-50">{record.wake_time || '-'}</td>
                   <td className="p-2 border text-xs bg-green-50">
                     <span className="font-semibold block">{record.is_non_muslim ? '⛪ Selain Islam' : '🕌 Islam'}</span>
@@ -1906,7 +1968,7 @@ function AppContent() {
                       {record.category}
                     </span>
                   </td>
-                  <td className="p-3 border text-center">
+                  <td className="p-3 border text-center print:hidden">
                     <button onClick={() => handleDeleteHabitRecord(record.id)} className="bg-red-100 hover:bg-red-200 text-red-600 p-2 rounded-lg transition-colors" title="Hapus Data">
                       🗑️
                     </button>
@@ -1915,12 +1977,126 @@ function AppContent() {
               ))}
               {filteredRecords.length === 0 && (
                 <tr>
-                  <td colSpan={13} className="p-6 text-center text-gray-500">Tidak ada data.</td>
+                  <td colSpan={13} className="p-6 text-center text-gray-500">Tidak ada data untuk tanggal ini.</td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+        )}
+
+        {showDailyReportPreview && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-[60] p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl max-w-4xl w-full p-8 shadow-2xl relative my-8">
+              <button onClick={() => setShowDailyReportPreview(false)} className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl print:hidden">✕</button>
+              
+              <div className="flex flex-wrap gap-4 mb-6 print:hidden">
+                <button onClick={handlePrintDaily} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                  🖨️ Cetak Laporan
+                </button>
+                <button onClick={handleExportDailyWord} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                  📄 Simpan Word (.doc)
+                </button>
+                <button onClick={() => setShowDailyReportPreview(false)} className="bg-gray-500 hover:bg-gray-600 text-white py-3 px-6 rounded-xl font-bold flex items-center justify-center gap-2">
+                  ← Kembali / Tutup
+                </button>
+              </div>
+
+              <div id="printable-daily-report" className="bg-white p-4 text-black font-serif">
+                {/* Kop Sekolah */}
+                <div className="flex items-center border-b-4 border-double border-black pb-4 mb-6">
+                  <div className="flex-1 text-center">
+                    <h1 className="text-2xl font-bold uppercase">{schoolName}</h1>
+                    <p className="text-sm italic">{schoolAddress}</p>
+                  </div>
+                </div>
+
+                <h2 className="text-xl font-bold text-center underline mb-6 uppercase">LAPORAN REKAPITULASI HARIAN</h2>
+                
+                <div className="mb-4 grid grid-cols-2 text-sm">
+                  <div>
+                    <p><b>Kelas:</b> {selectedReportClass || 'Semua Kelas'}</p>
+                    <p><b>Tanggal:</b> {dailyReportDate}</p>
+                  </div>
+                  <div className="text-right">
+                    <p><b>Tanggal Cetak:</b> {new Date().toLocaleDateString('id-ID')}</p>
+                  </div>
+                </div>
+
+                <table className="w-full border-collapse border border-black text-xs">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="border border-black p-2 text-center w-10">No</th>
+                      <th className="border border-black p-2">Nama Siswa</th>
+                      <th className="border border-black p-2 text-center">Kelas</th>
+                      <th className="border border-black p-2 text-center">⏰ Bangun</th>
+                      <th className="border border-black p-2 text-center">🙏 Ibadah</th>
+                      <th className="border border-black p-2 text-center">⚽ Olahraga</th>
+                      <th className="border border-black p-2 text-center">🥗 Makan</th>
+                      <th className="border border-black p-2 text-center">📚 Belajar</th>
+                      <th className="border border-black p-2 text-center">🤝 Sosial</th>
+                      <th className="border border-black p-2 text-center">🌙 Tidur</th>
+                      <th className="border border-black p-2 text-center">Skor (%)</th>
+                      <th className="border border-black p-2 text-center">Kategori</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRecords.map((record: any, index: number) => (
+                      <tr key={record.id}>
+                        <td className="border border-black p-2 text-center">{index + 1}</td>
+                        <td className="border border-black p-2 font-bold">{record.student_name}</td>
+                        <td className="border border-black p-2 text-center">{record.class}</td>
+                        <td className="border border-black p-2 text-center">{record.wake_time || '-'}</td>
+                        <td className="border border-black p-2 text-center">{record.is_non_muslim ? 'Non-Islam' : 'Islam'}</td>
+                        <td className="border border-black p-2 text-center">{record.exercise ? 'Ya' : 'Tidak'}</td>
+                        <td className="border border-black p-2 text-center">{record.healthy_food ? 'Ya' : 'Tidak'}</td>
+                        <td className="border border-black p-2 text-center">{record.study_duration ? `${record.study_duration} mnt` : '0 mnt'}</td>
+                        <td className="border border-black p-2 text-center truncate max-w-[100px]">{record.social_activity || '-'}</td>
+                        <td className="border border-black p-2 text-center">{record.sleep_time || '-'}</td>
+                        <td className="border border-black p-2 text-center font-bold">{record.total_score}%</td>
+                        <td className="border border-black p-2 text-center text-xs">{record.category}</td>
+                      </tr>
+                    ))}
+                    {filteredRecords.length === 0 && (
+                      <tr>
+                        <td colSpan={12} className="border border-black p-4 text-center">Tidak ada data untuk tanggal ini.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+
+                {/* Tanda Tangan */}
+                <div className="mt-12 text-sm grid grid-cols-2 gap-8" style={{ pageBreakInside: 'avoid' }}>
+                  <div className="text-center">
+                    <p>Mengetahui,</p>
+                    <p>Kepala Sekolah</p>
+                    <div className="h-24"></div>
+                    <p className="font-bold underline">{principalName}</p>
+                    {principalNip && <p>NIP. {principalNip}</p>}
+                  </div>
+                  <div className="text-center">
+                    <p>{new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                    <p>Guru Kelas</p>
+                    <div className="h-24"></div>
+                    <p className="font-bold underline">{teacherName}</p>
+                    {teacherNip && <p>NIP. {teacherNip}</p>}
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-8 pt-6 border-t border-gray-200 flex flex-wrap gap-4 print:hidden">
+                <button onClick={handlePrintDaily} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                  🖨️ Cetak Laporan
+                </button>
+                <button onClick={handleExportDailyWord} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                  📄 Simpan Word (.doc)
+                </button>
+                <button onClick={() => setShowDailyReportPreview(false)} className="bg-gray-500 hover:bg-gray-600 text-white py-3 px-6 rounded-xl font-bold flex items-center justify-center gap-2">
+                  ← Kembali / Tutup
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     );
@@ -2012,7 +2188,7 @@ function AppContent() {
     const handleExportMonthlyWord = () => {
       const elementId = 'printable-monthly-report';
       const filename = `Rekap_Bulanan_${selectedReportClass || 'Semua'}_${selectedYear}_M${selectedMonth}`;
-      const preHtml = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Export HTML To Doc</title><style>table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 8px; text-align: left; } .text-center { text-align: center; } .font-bold { font-weight: bold; } .kop { text-align: center; border-bottom: 3px double black; padding-bottom: 10px; margin-bottom: 20px; } .kop h1 { margin: 0; font-size: 20pt; } .kop p { margin: 0; font-size: 10pt; } .signature-table { width: 100%; margin-top: 50px; border: none !important; } .signature-table td { border: none !important; }</style></head><body>";
+      const preHtml = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Export HTML To Doc</title><style>@page { size: 11.0in 8.5in; mso-page-orientation: landscape; } body { margin: 1cm; } table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 8px; text-align: left; } .text-center { text-align: center; } .font-bold { font-weight: bold; } .kop { text-align: center; border-bottom: 3px double black; padding-bottom: 10px; margin-bottom: 20px; } .kop h1 { margin: 0; font-size: 20pt; } .kop p { margin: 0; font-size: 10pt; } .signature-table { width: 100%; margin-top: 50px; border: none !important; } .signature-table td { border: none !important; }</style></head><body>";
       const postHtml = "</body></html>";
       const content = document.getElementById(elementId)?.innerHTML || '';
       const html = preHtml + content + postHtml;
@@ -2468,7 +2644,7 @@ function AppContent() {
     const handleExportWord = () => {
       const elementId = 'printable-report';
       const filename = `Rekap_Semester_${selectedReportClass || 'Semua'}_${selectedSemesterYear}_S${selectedSemester}`;
-      const preHtml = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Export HTML To Doc</title><style>table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 8px; text-align: left; } .text-center { text-align: center; } .font-bold { font-weight: bold; } .kop { text-align: center; border-bottom: 3px double black; padding-bottom: 10px; margin-bottom: 20px; } .kop h1 { margin: 0; font-size: 20pt; } .kop p { margin: 0; font-size: 10pt; } .signature-table { width: 100%; margin-top: 50px; border: none !important; } .signature-table td { border: none !important; }</style></head><body>";
+      const preHtml = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Export HTML To Doc</title><style>@page { size: 11.0in 8.5in; mso-page-orientation: landscape; } body { margin: 1cm; } table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid black; padding: 8px; text-align: left; } .text-center { text-align: center; } .font-bold { font-weight: bold; } .kop { text-align: center; border-bottom: 3px double black; padding-bottom: 10px; margin-bottom: 20px; } .kop h1 { margin: 0; font-size: 20pt; } .kop p { margin: 0; font-size: 10pt; } .signature-table { width: 100%; margin-top: 50px; border: none !important; } .signature-table td { border: none !important; }</style></head><body>";
       const postHtml = "</body></html>";
       const content = document.getElementById(elementId)?.innerHTML || '';
       const html = preHtml + content + postHtml;
