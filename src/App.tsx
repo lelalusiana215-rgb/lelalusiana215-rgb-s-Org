@@ -2353,6 +2353,18 @@ function AppContent() {
                   </div>
                 )}
               </div>
+
+              <div className="mt-8 pt-6 border-t border-gray-200 flex flex-wrap gap-4 print:hidden">
+                <button onClick={handlePrintMonthly} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                  🖨️ Cetak Laporan
+                </button>
+                <button onClick={handleExportMonthlyWord} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                  📄 Simpan Word (.doc)
+                </button>
+                <button onClick={() => setShowMonthlyReportPreview(false)} className="bg-gray-500 hover:bg-gray-600 text-white py-3 px-6 rounded-xl font-bold flex items-center justify-center gap-2">
+                  ← Kembali / Tutup
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -2821,6 +2833,18 @@ function AppContent() {
                     </div>
                   </div>
                 )}
+              </div>
+
+              <div className="mt-8 pt-6 border-t border-gray-200 flex flex-wrap gap-4 print:hidden">
+                <button onClick={handlePrint} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                  🖨️ Cetak Laporan
+                </button>
+                <button onClick={handleExportWord} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                  📄 Simpan Word (.doc)
+                </button>
+                <button onClick={() => setShowReportPreview(false)} className="bg-gray-500 hover:bg-gray-600 text-white py-3 px-6 rounded-xl font-bold flex items-center justify-center gap-2">
+                  ← Kembali / Tutup
+                </button>
               </div>
             </div>
           </div>
