@@ -5,6 +5,7 @@ import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDoc, s
 import { db, auth, signInWithGoogle, signInWithGithub } from './firebase';
 import { Student, HabitRecord } from './types';
 import * as XLSX from 'xlsx';
+import html2canvas from 'html2canvas';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { 
   CheckCircle, 
@@ -2308,49 +2309,44 @@ function AppContent() {
       URL.revokeObjectURL(url);
     };
 
+    const downloadMonthlyChart = async () => {
+      const chartElement = document.querySelector('.monthly-chart') as HTMLElement;
+      if (!chartElement) return;
+      try {
+        const canvas = await html2canvas(chartElement, { scale: 2, logging: false, useCORS: true, backgroundColor: '#ffffff' } as any);
+        const pngUrl = canvas.toDataURL('image/png');
+        const downloadLink = document.createElement('a');
+        downloadLink.href = pngUrl;
+        downloadLink.download = `Grafik_Kemajuan_${selectedReportClass || 'Semua'}_M${selectedMonth}.png`;
+        downloadLink.click();
+      } catch (e) {
+        console.error("Gagal mendownload grafik bulanan:", e);
+      }
+    };
+
     const handleShowMonthlyPreview = (): Promise<string> => {
       return new Promise((resolve) => {
-        const svg = document.querySelector('.monthly-chart svg');
-        if (svg) {
-          try {
-            const svgData = new XMLSerializer().serializeToString(svg);
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            const img = new Image();
-            
-            canvas.width = 1200;
-            canvas.height = 600;
-            
-            img.onload = () => {
-              if (ctx) {
-                ctx.fillStyle = 'white';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                const pngUrl = canvas.toDataURL('image/png');
-                setMonthlyChartImageBase64(pngUrl);
-                setShowMonthlyReportPreview(true);
-                resolve(pngUrl);
-              } else {
-                setShowMonthlyReportPreview(true);
-                resolve('');
-              }
-            };
-            img.onerror = () => {
+        setTimeout(async () => {
+          const chartElement = document.querySelector('.monthly-chart') as HTMLElement;
+          if (chartElement) {
+            try {
+              const canvas = await html2canvas(chartElement, { scale: 2, logging: false, useCORS: true, backgroundColor: '#ffffff' } as any);
+              const pngUrl = canvas.toDataURL('image/png');
+              setMonthlyChartImageBase64(pngUrl);
+              setShowMonthlyReportPreview(true);
+              resolve(pngUrl);
+            } catch (e) {
+              console.error("Gagal merender grafik dengan html2canvas:", e);
+              setMonthlyChartImageBase64('');
               setShowMonthlyReportPreview(true);
               resolve('');
-            };
-            img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-          } catch (e) {
-            console.error("Gagal men-serialize grafik:", e);
+            }
+          } else {
             setMonthlyChartImageBase64('');
             setShowMonthlyReportPreview(true);
             resolve('');
           }
-        } else {
-          setMonthlyChartImageBase64('');
-          setShowMonthlyReportPreview(true);
-          resolve('');
-        }
+        }, 150);
       });
     };
 
@@ -2441,9 +2437,14 @@ function AppContent() {
           <>
             {chartData.length > 0 && (
               <div className="mb-8 bg-yellow-50 p-6 rounded-2xl border-2 border-yellow-100">
-                <h3 className="text-xl font-bold text-center text-yellow-800 mb-6">
-                  Grafik Rata-rata Skor Siswa {selectedReportClass}
-                </h3>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xl font-bold text-yellow-800">
+                    Grafik Rata-rata Skor Siswa {selectedReportClass}
+                  </h3>
+                  <button onClick={downloadMonthlyChart} className="bg-yellow-600 hover:bg-yellow-700 text-white py-2 px-4 rounded-lg text-sm font-bold flex items-center gap-2">
+                    📥 Download Grafik
+                  </button>
+                </div>
                 <div className="h-80 w-full monthly-chart">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
@@ -2634,21 +2635,40 @@ function AppContent() {
                 </div>
 
                 {/* Lampiran Grafik Bulanan */}
-                {monthlyChartImageBase64 && (
-                  <div className="mt-16 pt-8 border-t border-gray-300" style={{ pageBreakBefore: 'always' }}>
-                    <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                      <h3 className="text-lg font-bold uppercase underline" style={{ fontFamily: 'serif', color: '#000' }}>LAMPIRAN: GRAFIK KEMAJUAN BULANAN</h3>
-                      <p className="text-xs italic" style={{ color: '#666', marginTop: '5px' }}>SIMO-G7KAIH - Pemantauan Kebiasaan Anak Indonesia Hebat</p>
-                    </div>
-                    <div className="flex justify-center" style={{ display: 'flex', justifyContent: 'center', marginTop: '20px' }}>
+                <div className="mt-16 pt-8 border-t border-gray-300" style={{ pageBreakBefore: 'always' }}>
+                  <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                    <h3 className="text-lg font-bold uppercase underline" style={{ fontFamily: 'serif', color: '#000' }}>LAMPIRAN: GRAFIK & TREN KEMAJUAN BULANAN</h3>
+                    <p className="text-xs italic" style={{ color: '#666', marginTop: '5px' }}>SIMO-G7KAIH - Pemantauan Kebiasaan Anak Indonesia Hebat</p>
+                  </div>
+                  {monthlyChartImageBase64 && (
+                    <div className="flex justify-center" style={{ display: 'flex', justifyContent: 'center', marginTop: '20px', marginBottom: '30px' }}>
                       <img 
                         src={monthlyChartImageBase64} 
                         alt="Grafik Kemajuan Bulanan" 
                         style={{ maxWidth: '100%', width: '650px', height: 'auto', border: '1px solid #ddd', padding: '8px', backgroundColor: '#fff' }} 
                       />
                     </div>
+                  )}
+                  {/* HTML Visual Progress Chart for Word & PDF */}
+                  <div style={{ marginTop: '20px' }}>
+                    <h4 style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '10px', textAlign: 'center' }}>Tabel Visual Rata-rata Skor Siswa</h4>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                      <tbody>
+                        {studentAverages.map((student: any) => (
+                          <tr key={student.id} style={{ borderBottom: '1px solid #ddd' }}>
+                            <td style={{ padding: '6px', width: '30%', fontWeight: 'bold' }}>{student.student_name}</td>
+                            <td style={{ padding: '6px', width: '60%' }}>
+                              <div style={{ background: '#eee', borderRadius: '4px', height: '16px', width: '100%', position: 'relative', overflow: 'hidden' }}>
+                                <div style={{ background: '#eab308', height: '100%', width: `${student.averageScore}%`, borderRadius: '4px' }}></div>
+                              </div>
+                            </td>
+                            <td style={{ padding: '6px', width: '10%', textAlign: 'right', fontWeight: 'bold' }}>{student.averageScore}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                )}
+                </div>
               </div>
 
               <div className="mt-8 pt-6 border-t border-gray-200 flex flex-wrap gap-4 print:hidden">
@@ -2780,78 +2800,44 @@ function AppContent() {
       URL.revokeObjectURL(url);
     };
 
-    const downloadChart = () => {
-      const svg = document.querySelector('.semester-chart svg');
-      if (!svg) return;
-
-      const svgData = new XMLSerializer().serializeToString(svg);
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      const img = new Image();
-      
-      const svgSize = svg.getBoundingClientRect();
-      canvas.width = svgSize.width * 2; // Higher resolution
-      canvas.height = svgSize.height * 2;
-      
-      img.onload = () => {
-        if (ctx) {
-          ctx.fillStyle = 'white';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          const pngUrl = canvas.toDataURL('image/png');
-          const downloadLink = document.createElement('a');
-          downloadLink.href = pngUrl;
-          downloadLink.download = `Grafik_Kemajuan_${selectedReportClass || 'Semua'}_S${selectedSemester}.png`;
-          downloadLink.click();
-        }
-      };
-      
-      img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+    const downloadChart = async () => {
+      const chartElement = document.querySelector('.semester-chart') as HTMLElement;
+      if (!chartElement) return;
+      try {
+        const canvas = await html2canvas(chartElement, { scale: 2, logging: false, useCORS: true, backgroundColor: '#ffffff' } as any);
+        const pngUrl = canvas.toDataURL('image/png');
+        const downloadLink = document.createElement('a');
+        downloadLink.href = pngUrl;
+        downloadLink.download = `Grafik_Kemajuan_${selectedReportClass || 'Semua'}_S${selectedSemester}.png`;
+        downloadLink.click();
+      } catch (e) {
+        console.error("Gagal mendownload grafik semester:", e);
+      }
     };
 
     const handleShowPreview = (): Promise<string> => {
       return new Promise((resolve) => {
-        const svg = document.querySelector('.semester-chart svg');
-        if (svg) {
-          try {
-            const svgData = new XMLSerializer().serializeToString(svg);
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            const img = new Image();
-            
-            canvas.width = 1200; // high res for print/word
-            canvas.height = 600;
-            
-            img.onload = () => {
-              if (ctx) {
-                ctx.fillStyle = 'white';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                const pngUrl = canvas.toDataURL('image/png');
-                setChartImageBase64(pngUrl);
-                setShowReportPreview(true);
-                resolve(pngUrl);
-              } else {
-                setShowReportPreview(true);
-                resolve('');
-              }
-            };
-            img.onerror = () => {
+        setTimeout(async () => {
+          const chartElement = document.querySelector('.semester-chart') as HTMLElement;
+          if (chartElement) {
+            try {
+              const canvas = await html2canvas(chartElement, { scale: 2, logging: false, useCORS: true, backgroundColor: '#ffffff' } as any);
+              const pngUrl = canvas.toDataURL('image/png');
+              setChartImageBase64(pngUrl);
+              setShowReportPreview(true);
+              resolve(pngUrl);
+            } catch (e) {
+              console.error("Gagal merender grafik dengan html2canvas:", e);
+              setChartImageBase64('');
               setShowReportPreview(true);
               resolve('');
-            };
-            img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-          } catch (e) {
-            console.error("Gagal men-serialize grafik:", e);
+            }
+          } else {
             setChartImageBase64('');
             setShowReportPreview(true);
             resolve('');
           }
-        } else {
-          setChartImageBase64('');
-          setShowReportPreview(true);
-          resolve('');
-        }
+        }, 150);
       });
     };
 
@@ -3130,22 +3116,41 @@ function AppContent() {
                   </div>
                 </div>
 
-                {/* Lampiran Grafik */}
-                {chartImageBase64 && (
-                  <div className="mt-16 pt-8 border-t border-gray-300" style={{ pageBreakBefore: 'always' }}>
-                    <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                      <h3 className="text-lg font-bold uppercase underline" style={{ fontFamily: 'serif', color: '#000' }}>LAMPIRAN: GRAFIK KEMAJUAN SEMESTER</h3>
-                      <p className="text-xs italic" style={{ color: '#666', marginTop: '5px' }}>SIMO-G7KAIH - Pemantauan Kebiasaan Anak Indonesia Hebat</p>
-                    </div>
-                    <div className="flex justify-center" style={{ display: 'flex', justifyContent: 'center', marginTop: '20px' }}>
+                {/* Lampiran Grafik Semester */}
+                <div className="mt-16 pt-8 border-t border-gray-300" style={{ pageBreakBefore: 'always' }}>
+                  <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                    <h3 className="text-lg font-bold uppercase underline" style={{ fontFamily: 'serif', color: '#000' }}>LAMPIRAN: GRAFIK & TREN KEMAJUAN SEMESTER</h3>
+                    <p className="text-xs italic" style={{ color: '#666', marginTop: '5px' }}>SIMO-G7KAIH - Pemantauan Kebiasaan Anak Indonesia Hebat</p>
+                  </div>
+                  {chartImageBase64 && (
+                    <div className="flex justify-center" style={{ display: 'flex', justifyContent: 'center', marginTop: '20px', marginBottom: '30px' }}>
                       <img 
                         src={chartImageBase64} 
                         alt="Grafik Kemajuan Semester" 
                         style={{ maxWidth: '100%', width: '650px', height: 'auto', border: '1px solid #ddd', padding: '8px', backgroundColor: '#fff' }} 
                       />
                     </div>
+                  )}
+                  {/* HTML Visual Progress Chart for Word & PDF */}
+                  <div style={{ marginTop: '20px' }}>
+                    <h4 style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '10px', textAlign: 'center' }}>Tabel Visual Rata-rata Skor per Bulan</h4>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                      <tbody>
+                        {chartData.map((item: any, idx: number) => (
+                          <tr key={idx} style={{ borderBottom: '1px solid #ddd' }}>
+                            <td style={{ padding: '6px', width: '30%', fontWeight: 'bold' }}>{item.name}</td>
+                            <td style={{ padding: '6px', width: '60%' }}>
+                              <div style={{ background: '#eee', borderRadius: '4px', height: '16px', width: '100%', position: 'relative', overflow: 'hidden' }}>
+                                <div style={{ background: '#9333ea', height: '100%', width: `${item.skor}%`, borderRadius: '4px' }}></div>
+                              </div>
+                            </td>
+                            <td style={{ padding: '6px', width: '10%', textAlign: 'right', fontWeight: 'bold' }}>{item.skor}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                )}
+                </div>
               </div>
 
               <div className="mt-8 pt-6 border-t border-gray-200 flex flex-wrap gap-4 print:hidden">
