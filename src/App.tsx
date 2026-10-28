@@ -307,21 +307,51 @@ function AppContent() {
   const handlePrintDaily = useReactToPrint({
     contentRef: dailyPrintRef,
     documentTitle: `Rekap_Harian_${dailyReportDate}`,
-    pageStyle: `@page { size: A4 landscape; margin: 10mm; } @media print { body { -webkit-print-color-adjust: exact; } }`,
+    pageStyle: `
+      @page { size: A4 landscape; margin: 15mm; }
+      @media print {
+        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; width: 100%; margin: 0; background: white; }
+        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        table { width: 100% !important; border-collapse: collapse !important; page-break-inside: auto; }
+        tr { page-break-inside: avoid; page-break-after: auto; }
+        td, th { border: 1px solid black !important; padding: 6px !important; font-size: 11px !important; }
+        .print\\:hidden { display: none !important; }
+      }
+    `,
   });
 
   const monthlyPrintRef = useRef<HTMLDivElement>(null);
   const handlePrintMonthly = useReactToPrint({
     contentRef: monthlyPrintRef,
     documentTitle: `Rekap_Bulanan_${selectedReportClass || 'Semua'}_${selectedYear}_M${selectedMonth}`,
-    pageStyle: `@page { size: A4 landscape; margin: 10mm; } @media print { body { -webkit-print-color-adjust: exact; } }`,
+    pageStyle: `
+      @page { size: A4 landscape; margin: 15mm; }
+      @media print {
+        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; width: 100%; margin: 0; background: white; }
+        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        table { width: 100% !important; border-collapse: collapse !important; page-break-inside: auto; }
+        tr { page-break-inside: avoid; page-break-after: auto; }
+        td, th { border: 1px solid black !important; padding: 6px !important; font-size: 11px !important; }
+        .print\\:hidden { display: none !important; }
+      }
+    `,
   });
 
   const semesterPrintRef = useRef<HTMLDivElement>(null);
   const handlePrintSemester = useReactToPrint({
     contentRef: semesterPrintRef,
     documentTitle: `Rekap_Semester_${selectedReportClass || 'Semua'}_${selectedSemesterYear}_S${selectedSemester}`,
-    pageStyle: `@page { size: A4 landscape; margin: 10mm; } @media print { body { -webkit-print-color-adjust: exact; } }`,
+    pageStyle: `
+      @page { size: A4 landscape; margin: 15mm; }
+      @media print {
+        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; width: 100%; margin: 0; background: white; }
+        * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        table { width: 100% !important; border-collapse: collapse !important; page-break-inside: auto; }
+        tr { page-break-inside: avoid; page-break-after: auto; }
+        td, th { border: 1px solid black !important; padding: 6px !important; font-size: 11px !important; }
+        .print\\:hidden { display: none !important; }
+      }
+    `,
   });
 
   const handleEnterDemo = () => {
@@ -1892,10 +1922,6 @@ function AppContent() {
       return true;
     });
 
-    const handlePrintDaily = () => {
-      window.print();
-    };
-
     const handleExportDailyWord = () => {
       const elementId = 'printable-daily-report';
       const filename = `Rekap_Harian_${selectedReportClass || 'Semua'}_${dailyReportDate}`;
@@ -2259,10 +2285,6 @@ function AppContent() {
       name: student.student_name,
       'Rata-rata Skor': student.averageScore,
     }));
-
-    const handlePrintMonthly = () => {
-      window.print();
-    };
 
     const handleExportMonthlyWord = () => {
       const elementId = 'printable-monthly-report';
@@ -2722,10 +2744,6 @@ function AppContent() {
       };
     });
 
-    const handlePrint = () => {
-      window.print();
-    };
-
     const handleExportWord = () => {
       const elementId = 'printable-report';
       const filename = `Rekap_Semester_${selectedReportClass || 'Semua'}_${selectedSemesterYear}_S${selectedSemester}`;
@@ -2989,7 +3007,7 @@ function AppContent() {
               <button onClick={() => setShowReportPreview(false)} className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl print:hidden">✕</button>
               
               <div className="flex flex-wrap gap-4 mb-6 print:hidden">
-                <button onClick={handlePrint} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                <button onClick={handlePrintSemester} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
                   🖨️ Cetak Laporan
                 </button>
                 <button onClick={handleExportWord} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
@@ -3103,7 +3121,7 @@ function AppContent() {
               </div>
 
               <div className="mt-8 pt-6 border-t border-gray-200 flex flex-wrap gap-4 print:hidden">
-                <button onClick={handlePrint} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
+                <button onClick={handlePrintSemester} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
                   🖨️ Cetak Laporan
                 </button>
                 <button onClick={handleExportWord} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2">
