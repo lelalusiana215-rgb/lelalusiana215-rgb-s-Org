@@ -2308,36 +2308,50 @@ function AppContent() {
       URL.revokeObjectURL(url);
     };
 
-    const handleShowMonthlyPreview = () => {
-      const svg = document.querySelector('.monthly-chart svg');
-      if (svg) {
-        try {
-          const svgData = new XMLSerializer().serializeToString(svg);
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          const img = new Image();
-          
-          canvas.width = 1200;
-          canvas.height = 600;
-          
-          img.onload = () => {
-            if (ctx) {
-              ctx.fillStyle = 'white';
-              ctx.fillRect(0, 0, canvas.width, canvas.height);
-              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-              const pngUrl = canvas.toDataURL('image/png');
-              setMonthlyChartImageBase64(pngUrl);
-            }
-          };
-          img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-        } catch (e) {
-          console.error("Gagal men-serialize grafik:", e);
+    const handleShowMonthlyPreview = (): Promise<string> => {
+      return new Promise((resolve) => {
+        const svg = document.querySelector('.monthly-chart svg');
+        if (svg) {
+          try {
+            const svgData = new XMLSerializer().serializeToString(svg);
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            
+            canvas.width = 1200;
+            canvas.height = 600;
+            
+            img.onload = () => {
+              if (ctx) {
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                const pngUrl = canvas.toDataURL('image/png');
+                setMonthlyChartImageBase64(pngUrl);
+                setShowMonthlyReportPreview(true);
+                resolve(pngUrl);
+              } else {
+                setShowMonthlyReportPreview(true);
+                resolve('');
+              }
+            };
+            img.onerror = () => {
+              setShowMonthlyReportPreview(true);
+              resolve('');
+            };
+            img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+          } catch (e) {
+            console.error("Gagal men-serialize grafik:", e);
+            setMonthlyChartImageBase64('');
+            setShowMonthlyReportPreview(true);
+            resolve('');
+          }
+        } else {
           setMonthlyChartImageBase64('');
+          setShowMonthlyReportPreview(true);
+          resolve('');
         }
-      } else {
-        setMonthlyChartImageBase64('');
-      }
-      setShowMonthlyReportPreview(true);
+      });
     };
 
     return (
@@ -2376,13 +2390,13 @@ function AppContent() {
             </div>
           </div>
           <div className="mt-6 flex flex-wrap gap-4 justify-center">
-            <button type="button" onClick={handleShowMonthlyPreview} className="bg-yellow-600 hover:bg-yellow-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+            <button type="button" onClick={() => handleShowMonthlyPreview()} className="bg-yellow-600 hover:bg-yellow-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
               👁️ Preview Laporan
             </button>
-            <button type="button" onClick={() => { handleShowMonthlyPreview(); setTimeout(() => handlePrintMonthly(), 400); }} className="bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+            <button type="button" onClick={async () => { await handleShowMonthlyPreview(); setTimeout(() => handlePrintMonthly(), 300); }} className="bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
               🖨️ Cetak Laporan
             </button>
-            <button type="button" onClick={() => { handleShowMonthlyPreview(); setTimeout(() => handleExportMonthlyWord(), 400); }} className="bg-teal-600 hover:bg-teal-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+            <button type="button" onClick={async () => { await handleShowMonthlyPreview(); setTimeout(() => handleExportMonthlyWord(), 300); }} className="bg-teal-600 hover:bg-teal-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
               📄 Simpan Word (.doc)
             </button>
           </div>
@@ -2795,36 +2809,50 @@ function AppContent() {
       img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
     };
 
-    const handleShowPreview = () => {
-      const svg = document.querySelector('.semester-chart svg');
-      if (svg) {
-        try {
-          const svgData = new XMLSerializer().serializeToString(svg);
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          const img = new Image();
-          
-          canvas.width = 1200; // high res for print/word
-          canvas.height = 600;
-          
-          img.onload = () => {
-            if (ctx) {
-              ctx.fillStyle = 'white';
-              ctx.fillRect(0, 0, canvas.width, canvas.height);
-              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-              const pngUrl = canvas.toDataURL('image/png');
-              setChartImageBase64(pngUrl);
-            }
-          };
-          img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-        } catch (e) {
-          console.error("Gagal men-serialize grafik:", e);
+    const handleShowPreview = (): Promise<string> => {
+      return new Promise((resolve) => {
+        const svg = document.querySelector('.semester-chart svg');
+        if (svg) {
+          try {
+            const svgData = new XMLSerializer().serializeToString(svg);
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            
+            canvas.width = 1200; // high res for print/word
+            canvas.height = 600;
+            
+            img.onload = () => {
+              if (ctx) {
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                const pngUrl = canvas.toDataURL('image/png');
+                setChartImageBase64(pngUrl);
+                setShowReportPreview(true);
+                resolve(pngUrl);
+              } else {
+                setShowReportPreview(true);
+                resolve('');
+              }
+            };
+            img.onerror = () => {
+              setShowReportPreview(true);
+              resolve('');
+            };
+            img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+          } catch (e) {
+            console.error("Gagal men-serialize grafik:", e);
+            setChartImageBase64('');
+            setShowReportPreview(true);
+            resolve('');
+          }
+        } else {
           setChartImageBase64('');
+          setShowReportPreview(true);
+          resolve('');
         }
-      } else {
-        setChartImageBase64('');
-      }
-      setShowReportPreview(true);
+      });
     };
 
     return (
@@ -2863,13 +2891,13 @@ function AppContent() {
             </div>
           </div>
           <div className="mt-6 flex flex-wrap gap-4 justify-center">
-            <button type="button" onClick={handleShowPreview} className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+            <button type="button" onClick={() => handleShowPreview()} className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
               👁️ Preview Laporan
             </button>
-            <button type="button" onClick={() => { handleShowPreview(); setTimeout(() => handlePrintSemester(), 400); }} className="bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+            <button type="button" onClick={async () => { await handleShowPreview(); setTimeout(() => handlePrintSemester(), 300); }} className="bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
               🖨️ Cetak Laporan
             </button>
-            <button type="button" onClick={() => { handleShowPreview(); setTimeout(() => handleExportWord(), 400); }} className="bg-teal-600 hover:bg-teal-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+            <button type="button" onClick={async () => { await handleShowPreview(); setTimeout(() => handleExportWord(), 300); }} className="bg-teal-600 hover:bg-teal-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
               📄 Simpan Word (.doc)
             </button>
           </div>
