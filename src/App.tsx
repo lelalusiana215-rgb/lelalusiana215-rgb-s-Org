@@ -1,5 +1,6 @@
 import * as React from 'react';
 const { useState, useEffect, useRef } = React;
+import { useReactToPrint } from 'react-to-print';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDoc, setDoc, getDocs, getDocFromServer, limit, writeBatch } from 'firebase/firestore';
 import { db, auth, signInWithGoogle, signInWithGithub } from './firebase';
 import { Student, HabitRecord } from './types';
@@ -251,6 +252,8 @@ function AppContent() {
   const [monthlyChartImageBase64, setMonthlyChartImageBase64] = useState('');
   const [showDailyReportPreview, setShowDailyReportPreview] = useState(false);
 
+
+
   const [students, setStudents] = useState<Student[]>([]);
   const [habitRecords, setHabitRecords] = useState<HabitRecord[]>([]);
 
@@ -274,6 +277,9 @@ function AppContent() {
   const [showToast, setShowToast] = useState(false);
   const [isErrorToast, setIsErrorToast] = useState(false);
 
+  const [showIncompleteModal, setShowIncompleteModal] = useState(false);
+  const [missingFields, setMissingFields] = useState<string[]>([]);
+
   // Form State
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedStudent, setSelectedStudent] = useState('');
@@ -296,6 +302,27 @@ function AppContent() {
   const [selectedSemester, setSelectedSemester] = useState(new Date().getMonth() < 6 ? 2 : 1);
   const [selectedSemesterYear, setSelectedSemesterYear] = useState(new Date().getFullYear());
   const [selectedReportClass, setSelectedReportClass] = useState('');
+
+  const dailyPrintRef = useRef<HTMLDivElement>(null);
+  const handlePrintDaily = useReactToPrint({
+    contentRef: dailyPrintRef,
+    documentTitle: `Rekap_Harian_${dailyReportDate}`,
+    pageStyle: `@page { size: A4 landscape; margin: 10mm; } @media print { body { -webkit-print-color-adjust: exact; } }`,
+  });
+
+  const monthlyPrintRef = useRef<HTMLDivElement>(null);
+  const handlePrintMonthly = useReactToPrint({
+    contentRef: monthlyPrintRef,
+    documentTitle: `Rekap_Bulanan_${selectedReportClass || 'Semua'}_${selectedYear}_M${selectedMonth}`,
+    pageStyle: `@page { size: A4 landscape; margin: 10mm; } @media print { body { -webkit-print-color-adjust: exact; } }`,
+  });
+
+  const semesterPrintRef = useRef<HTMLDivElement>(null);
+  const handlePrintSemester = useReactToPrint({
+    contentRef: semesterPrintRef,
+    documentTitle: `Rekap_Semester_${selectedReportClass || 'Semua'}_${selectedSemesterYear}_S${selectedSemester}`,
+    pageStyle: `@page { size: A4 landscape; margin: 10mm; } @media print { body { -webkit-print-color-adjust: exact; } }`,
+  });
 
   const handleEnterDemo = () => {
     setIsDemo(true);
@@ -1019,6 +1046,21 @@ function AppContent() {
     
     const studentObj = students.find(s => s.student_name === selectedStudent && isClassMatch(s.class, selectedClass));
     const actualClass = studentObj ? studentObj.class : selectedClass;
+
+    const missing: string[] = [];
+    if (!selectedClass) missing.push('Kelas');
+    if (!selectedStudent) missing.push('Nama Siswa');
+    if (!selectedDate) missing.push('Tanggal');
+    if (!formData.get('wake-time')) missing.push('Waktu Bangun Pagi (Kebiasaan 1)');
+    if (!formData.get('study-duration')) missing.push('Durasi Belajar (Kebiasaan 5)');
+    if (!formData.get('sleep-time')) missing.push('Waktu Tidur Cepat (Kebiasaan 7)');
+
+    if (missing.length > 0) {
+      setMissingFields(missing);
+      setShowIncompleteModal(true);
+      displayToast('⚠️ Harap lengkapi data yang wajib diisi sebelum menyimpan!', true);
+      return;
+    }
 
     const isDuplicate = formHabitRecords.some(item => 
       item.student_name === selectedStudent && 
@@ -1813,6 +1855,37 @@ function AppContent() {
     return Math.round((totalChecked / (records.length * 6)) * 100);
   };
 
+  const renderReportNav = (activeReport: 'daily' | 'monthly' | 'semester') => (
+    <div className="flex flex-wrap items-center justify-between gap-4 mb-6 print:hidden bg-gray-50 p-4 rounded-2xl border border-gray-200">
+      <button onClick={() => setCurrentPage('home')} className="bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl font-bold flex items-center gap-2 cursor-pointer">
+        ← Kembali ke Beranda
+      </button>
+      <div className="flex flex-wrap gap-2">
+        <button 
+          type="button"
+          onClick={() => setCurrentPage('daily')} 
+          className={`py-2 px-4 rounded-xl font-bold text-sm transition-all cursor-pointer ${activeReport === 'daily' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-50'}`}
+        >
+          📊 Rekap Harian
+        </button>
+        <button 
+          type="button"
+          onClick={() => setCurrentPage('monthly')} 
+          className={`py-2 px-4 rounded-xl font-bold text-sm transition-all cursor-pointer ${activeReport === 'monthly' ? 'bg-yellow-600 text-white shadow-md' : 'bg-white text-yellow-700 border border-yellow-200 hover:bg-yellow-50'}`}
+        >
+          📈 Rekap Bulanan
+        </button>
+        <button 
+          type="button"
+          onClick={() => setCurrentPage('semester')} 
+          className={`py-2 px-4 rounded-xl font-bold text-sm transition-all cursor-pointer ${activeReport === 'semester' ? 'bg-purple-600 text-white shadow-md' : 'bg-white text-purple-700 border border-purple-200 hover:bg-purple-50'}`}
+        >
+          🏆 Rekap Semester
+        </button>
+      </div>
+    </div>
+  );
+
   const renderDailyReportPage = () => {
     const filteredRecords = dailyHabitRecords.filter(record => {
       if (selectedReportClass && !isClassMatch(record.class, selectedReportClass)) return false;
@@ -1847,7 +1920,7 @@ function AppContent() {
 
     return (
       <div className="bg-white rounded-3xl shadow-2xl p-8">
-        <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl print:hidden">← Kembali ke Beranda</button>
+        {renderReportNav('daily')}
         <div className="text-center mb-6 print:hidden">
           <h2 className="text-3xl font-bold text-blue-700">📊 Rekap Harian</h2>
         </div>
@@ -1881,8 +1954,14 @@ function AppContent() {
             </div>
           </div>
           <div className="mt-6 flex flex-wrap gap-4 justify-center">
-            <button onClick={() => setShowDailyReportPreview(true)} className="bg-blue-600 hover:bg-blue-700 text-white py-3 px-8 rounded-xl font-bold shadow-lg flex items-center gap-2">
+            <button type="button" onClick={() => setShowDailyReportPreview(true)} className="bg-blue-600 hover:bg-blue-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
               👁️ Preview Laporan
+            </button>
+            <button type="button" onClick={() => { setShowDailyReportPreview(true); setTimeout(() => window.print(), 300); }} className="bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+              🖨️ Cetak Laporan
+            </button>
+            <button type="button" onClick={() => { setShowDailyReportPreview(true); setTimeout(() => handleExportDailyWord(), 300); }} className="bg-teal-600 hover:bg-teal-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+              📄 Simpan Word (.doc)
             </button>
           </div>
         </div>
@@ -2002,7 +2081,7 @@ function AppContent() {
                 </button>
               </div>
 
-              <div id="printable-daily-report" className="bg-white p-4 text-black font-serif">
+              <div id="printable-daily-report" ref={dailyPrintRef} className="bg-white p-4 text-black font-serif">
                 {/* Kop Sekolah */}
                 <div className="flex items-center border-b-4 border-double border-black pb-4 mb-6">
                   <div className="flex-1 text-center">
@@ -2106,7 +2185,7 @@ function AppContent() {
     if (!selectedReportClass) {
       return (
         <div className="bg-white rounded-3xl shadow-2xl p-8">
-          <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl">← Kembali ke Beranda</button>
+          {renderReportNav('monthly')}
           <div className="text-center mb-6">
             <h2 className="text-3xl font-bold text-yellow-700">📈 Rekap Bulanan</h2>
           </div>
@@ -2241,7 +2320,7 @@ function AppContent() {
 
     return (
       <div className="bg-white rounded-3xl shadow-2xl p-8">
-        <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl print:hidden">← Kembali ke Beranda</button>
+        {renderReportNav('monthly')}
         <div className="text-center mb-6 print:hidden">
           <h2 className="text-3xl font-bold text-yellow-700">📈 Rekap Bulanan</h2>
         </div>
@@ -2275,8 +2354,14 @@ function AppContent() {
             </div>
           </div>
           <div className="mt-6 flex flex-wrap gap-4 justify-center">
-            <button onClick={handleShowMonthlyPreview} className="bg-yellow-600 hover:bg-yellow-700 text-white py-3 px-8 rounded-xl font-bold shadow-lg flex items-center gap-2">
+            <button type="button" onClick={handleShowMonthlyPreview} className="bg-yellow-600 hover:bg-yellow-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
               👁️ Preview Laporan
+            </button>
+            <button type="button" onClick={() => { handleShowMonthlyPreview(); setTimeout(() => handlePrintMonthly(), 400); }} className="bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+              🖨️ Cetak Laporan
+            </button>
+            <button type="button" onClick={() => { handleShowMonthlyPreview(); setTimeout(() => handleExportMonthlyWord(), 400); }} className="bg-teal-600 hover:bg-teal-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+              📄 Simpan Word (.doc)
             </button>
           </div>
         </div>
@@ -2424,7 +2509,7 @@ function AppContent() {
                 </button>
               </div>
 
-              <div id="printable-monthly-report" className="bg-white p-4 text-black font-serif">
+              <div id="printable-monthly-report" ref={monthlyPrintRef} className="bg-white p-4 text-black font-serif">
                 {/* Kop Sekolah */}
                 <div className="flex items-center border-b-4 border-double border-black pb-4 mb-6">
                   <div className="flex-1 text-center">
@@ -2552,7 +2637,7 @@ function AppContent() {
     if (!selectedReportClass) {
       return (
         <div className="bg-white rounded-3xl shadow-2xl p-8">
-          <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl">← Kembali ke Beranda</button>
+          {renderReportNav('semester')}
           <div className="text-center mb-6">
             <h2 className="text-3xl font-bold text-purple-700">🏆 Rekap Semester</h2>
           </div>
@@ -2726,7 +2811,7 @@ function AppContent() {
 
     return (
       <div className="bg-white rounded-3xl shadow-2xl p-8">
-        <button onClick={() => setCurrentPage('home')} className="mb-6 bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-xl print:hidden">← Kembali ke Beranda</button>
+        {renderReportNav('semester')}
         <div className="text-center mb-6 print:hidden">
           <h2 className="text-3xl font-bold text-purple-700">🏆 Rekap Semester</h2>
         </div>
@@ -2760,8 +2845,14 @@ function AppContent() {
             </div>
           </div>
           <div className="mt-6 flex flex-wrap gap-4 justify-center">
-            <button onClick={handleShowPreview} className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-8 rounded-xl font-bold shadow-lg flex items-center gap-2">
+            <button type="button" onClick={handleShowPreview} className="bg-purple-600 hover:bg-purple-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
               👁️ Preview Laporan
+            </button>
+            <button type="button" onClick={() => { handleShowPreview(); setTimeout(() => handlePrintSemester(), 400); }} className="bg-green-600 hover:bg-green-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+              🖨️ Cetak Laporan
+            </button>
+            <button type="button" onClick={() => { handleShowPreview(); setTimeout(() => handleExportWord(), 400); }} className="bg-teal-600 hover:bg-teal-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg flex items-center gap-2 cursor-pointer">
+              📄 Simpan Word (.doc)
             </button>
           </div>
         </div>
@@ -2909,7 +3000,7 @@ function AppContent() {
                 </button>
               </div>
 
-              <div id="printable-report" className="bg-white p-4 text-black font-serif">
+              <div id="printable-report" ref={semesterPrintRef} className="bg-white p-4 text-black font-serif">
                 {/* Kop Sekolah */}
                 <div className="flex items-center border-b-4 border-double border-black pb-4 mb-6">
                   <div className="flex-1 text-center">
@@ -3199,6 +3290,35 @@ function AppContent() {
         {currentPage === 'admin' && isOwner && renderAdminPage()}
       </div>
 
+
+      {showIncompleteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full mx-4 shadow-2xl border-4 border-amber-100 text-center animate-bounce-once">
+            <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center text-3xl font-bold mx-auto mb-4 shadow-inner">
+              ⚠️
+            </div>
+            <h3 className="text-2xl font-bold mb-2 text-amber-800">Peringatan: Data Belum Lengkap!</h3>
+            <p className="text-gray-600 mb-4 text-sm leading-relaxed">
+              Mohon lengkapi bagian berikut sebelum menyimpan data agar laporan rekap valid:
+            </p>
+            <div className="bg-amber-50 p-4 rounded-2xl mb-6 text-left border border-amber-200">
+              <ul className="list-disc list-inside text-amber-900 font-semibold text-sm space-y-1">
+                {missingFields.map((field, idx) => (
+                  <li key={idx}>{field}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="flex gap-4">
+              <button 
+                onClick={() => setShowIncompleteModal(false)} 
+                className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-3 px-6 rounded-xl font-bold shadow-lg transition-colors cursor-pointer"
+              >
+                📝 Lengkapi Sekarang
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showPasswordModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
