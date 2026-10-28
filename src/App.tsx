@@ -5,7 +5,7 @@ import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDoc, s
 import { db, auth, signInWithGoogle, signInWithGithub } from './firebase';
 import { Student, HabitRecord } from './types';
 import * as XLSX from 'xlsx';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { 
   CheckCircle, 
   Download, 
@@ -2446,14 +2446,14 @@ function AppContent() {
                 </h3>
                 <div className="h-80 w-full monthly-chart">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                    <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="name" />
                       <YAxis domain={[0, 100]} />
                       <Tooltip />
                       <Legend />
-                      <Bar dataKey="Rata-rata Skor" fill="#eab308" radius={[4, 4, 0, 0]} />
-                    </BarChart>
+                      <Line type="monotone" dataKey="Rata-rata Skor" stroke="#eab308" strokeWidth={3} dot={{ r: 6, fill: '#eab308' }} activeDot={{ r: 8 }} />
+                    </LineChart>
                   </ResponsiveContainer>
                 </div>
               </div>
@@ -2948,14 +2948,14 @@ function AppContent() {
               </div>
               <div className="h-[300px] w-full semester-chart">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData}>
+                  <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="name" />
                     <YAxis domain={[0, 100]} />
                     <Tooltip />
                     <Legend />
-                    <Bar dataKey="skor" name="Rata-rata Skor (%)" fill="#9333ea" radius={[4, 4, 0, 0]} />
-                  </BarChart>
+                    <Line type="monotone" dataKey="skor" name="Rata-rata Skor (%)" stroke="#9333ea" strokeWidth={3} dot={{ r: 6, fill: '#9333ea' }} activeDot={{ r: 8 }} />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
             </div>
